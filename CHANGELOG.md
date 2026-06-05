@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.3.0 (2026-06-05)
+
+- `encode_generic`: primitive arrays inlined as `name[N]: val1,val2,val3`
+
 ## v0.2.0 (2026-06-05)
 
 - **Breaking**: `encode()` now emits `edges=N` in header line
