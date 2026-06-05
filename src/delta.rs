@@ -1,5 +1,5 @@
-use crate::types::DeltaPayload;
 use crate::kind_abbrev;
+use crate::types::DeltaPayload;
 use std::fmt::Write;
 
 /// Encode a DeltaPayload into GCF delta format.
@@ -12,9 +12,9 @@ pub fn encode_delta(d: &DeltaPayload) -> String {
     } else {
         0.0
     };
-    write!(
+    writeln!(
         b,
-        "GCF tool={} delta=true base_root={} new_root={} tokens={} savings={:.0}%\n",
+        "GCF tool={} delta=true base_root={} new_root={} tokens={} savings={:.0}%",
         d.tool, d.base_root, d.new_root, d.delta_tokens, savings
     )
     .unwrap();
@@ -24,7 +24,7 @@ pub fn encode_delta(d: &DeltaPayload) -> String {
         b.push_str("## removed\n");
         for s in &d.removed {
             let kind = kind_abbrev(&s.kind);
-            write!(b, "{} {}\n", kind, s.qualified_name).unwrap();
+            writeln!(b, "{} {}", kind, s.qualified_name).unwrap();
         }
     }
 
@@ -33,9 +33,9 @@ pub fn encode_delta(d: &DeltaPayload) -> String {
         b.push_str("## added\n");
         for (i, s) in d.added.iter().enumerate() {
             let kind = kind_abbrev(&s.kind);
-            write!(
+            writeln!(
                 b,
-                "@{} {} {} {:.2} {}\n",
+                "@{} {} {} {:.2} {}",
                 i, kind, s.qualified_name, s.score, s.provenance
             )
             .unwrap();
@@ -46,7 +46,7 @@ pub fn encode_delta(d: &DeltaPayload) -> String {
     if !d.removed_edges.is_empty() {
         b.push_str("## edges_removed\n");
         for e in &d.removed_edges {
-            write!(b, "{} -> {} {}\n", e.source, e.target, e.edge_type).unwrap();
+            writeln!(b, "{} -> {} {}", e.source, e.target, e.edge_type).unwrap();
         }
     }
 
@@ -54,7 +54,7 @@ pub fn encode_delta(d: &DeltaPayload) -> String {
     if !d.added_edges.is_empty() {
         b.push_str("## edges_added\n");
         for e in &d.added_edges {
-            write!(b, "{} -> {} {}\n", e.source, e.target, e.edge_type).unwrap();
+            writeln!(b, "{} -> {} {}", e.source, e.target, e.edge_type).unwrap();
         }
     }
 

@@ -1,5 +1,5 @@
-use crate::types::{Payload, Symbol};
 use crate::kind_abbrev;
+use crate::types::{Payload, Symbol};
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::sync::Mutex;
@@ -141,17 +141,17 @@ pub fn encode_with_session(p: &Payload, sess: &Session) -> String {
         } else {
             format!("distance_{}", g.distance)
         };
-        write!(b, "## {}\n", name).unwrap();
+        writeln!(b, "## {}", name).unwrap();
 
         for s in &g.symbols {
             let idx = local_index[s.qualified_name.as_str()];
             if sess.transmitted(&s.qualified_name) {
-                write!(b, "@{}  # previously transmitted\n", idx).unwrap();
+                writeln!(b, "@{}  # previously transmitted", idx).unwrap();
             } else {
                 let kind = kind_abbrev(&s.kind);
-                write!(
+                writeln!(
                     b,
-                    "@{} {} {} {:.2} {}\n",
+                    "@{} {} {} {:.2} {}",
                     idx, kind, s.qualified_name, s.score, s.provenance
                 )
                 .unwrap();

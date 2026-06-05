@@ -1,5 +1,5 @@
-use crate::types::{Edge, Payload, Symbol};
 use crate::kind_expand;
+use crate::types::{Edge, Payload, Symbol};
 use std::collections::HashMap;
 use std::fmt;
 
@@ -126,14 +126,14 @@ fn parse_header(fields: &str, p: &mut Payload) -> Result<(), DecodeError> {
         match key {
             "tool" => p.tool = val.to_string(),
             "budget" => {
-                p.token_budget = val.parse::<i64>().map_err(|_| {
-                    DecodeError::InvalidField(format!("invalid budget {:?}", val))
-                })?;
+                p.token_budget = val
+                    .parse::<i64>()
+                    .map_err(|_| DecodeError::InvalidField(format!("invalid budget {:?}", val)))?;
             }
             "tokens" => {
-                p.tokens_used = val.parse::<i64>().map_err(|_| {
-                    DecodeError::InvalidField(format!("invalid tokens {:?}", val))
-                })?;
+                p.tokens_used = val
+                    .parse::<i64>()
+                    .map_err(|_| DecodeError::InvalidField(format!("invalid tokens {:?}", val)))?;
             }
             "pack_root" => p.pack_root = val.to_string(),
             "symbols" => { /* informational, reconstructed from parsed symbols */ }
@@ -161,15 +161,15 @@ fn parse_symbol_line(line: &str, distance: i32) -> Result<(Symbol, usize), Decod
     }
 
     let id_str = &parts[0][1..]; // strip @
-    let id: usize = id_str.parse().map_err(|_| {
-        DecodeError::InvalidSymbolLine(format!("invalid symbol id {:?}", id_str))
-    })?;
+    let id: usize = id_str
+        .parse()
+        .map_err(|_| DecodeError::InvalidSymbolLine(format!("invalid symbol id {:?}", id_str)))?;
 
     let kind = kind_expand(parts[1]);
     let qname = parts[2].to_string();
-    let score: f64 = parts[3].parse().map_err(|_| {
-        DecodeError::InvalidSymbolLine(format!("invalid score {:?}", parts[3]))
-    })?;
+    let score: f64 = parts[3]
+        .parse()
+        .map_err(|_| DecodeError::InvalidSymbolLine(format!("invalid score {:?}", parts[3])))?;
     let provenance = parts[4].to_string();
 
     Ok((

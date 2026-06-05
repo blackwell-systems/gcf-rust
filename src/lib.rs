@@ -36,12 +36,12 @@
 //! assert_eq!(decoded.tool, "context_for_task");
 //! ```
 
-pub mod types;
 pub mod decode;
 pub mod delta;
 pub mod encode;
 pub mod generic;
 pub mod session;
+pub mod types;
 
 pub use decode::{decode, DecodeError};
 pub use delta::encode_delta;

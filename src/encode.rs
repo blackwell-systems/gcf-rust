@@ -1,5 +1,5 @@
-use crate::types::{Payload, Symbol};
 use crate::kind_abbrev;
+use crate::types::{Payload, Symbol};
 use std::collections::HashMap;
 use std::fmt::Write;
 
@@ -63,14 +63,14 @@ pub fn encode(p: &Payload) -> String {
         } else {
             format!("distance_{}", g.distance)
         };
-        write!(b, "## {}\n", name).unwrap();
+        writeln!(b, "## {}", name).unwrap();
 
         for s in &g.symbols {
             let idx = sym_index[s.qualified_name.as_str()];
             let kind = kind_abbrev(&s.kind);
-            write!(
+            writeln!(
                 b,
-                "@{} {} {} {:.2} {}\n",
+                "@{} {} {} {:.2} {}",
                 idx, kind, s.qualified_name, s.score, s.provenance
             )
             .unwrap();
