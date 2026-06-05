@@ -39,7 +39,9 @@ pub fn encode(p: &Payload) -> String {
     let valid_edges = p
         .edges
         .iter()
-        .filter(|e| sym_index.contains_key(e.source.as_str()) && sym_index.contains_key(e.target.as_str()))
+        .filter(|e| {
+            sym_index.contains_key(e.source.as_str()) && sym_index.contains_key(e.target.as_str())
+        })
         .count();
 
     // Header line.

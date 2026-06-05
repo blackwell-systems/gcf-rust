@@ -110,7 +110,10 @@ pub fn encode_with_session(p: &Payload, sess: &Session) -> String {
     let valid_edges = p
         .edges
         .iter()
-        .filter(|e| local_index.contains_key(e.source.as_str()) && local_index.contains_key(e.target.as_str()))
+        .filter(|e| {
+            local_index.contains_key(e.source.as_str())
+                && local_index.contains_key(e.target.as_str())
+        })
         .count();
 
     // Header with session=true marker.
