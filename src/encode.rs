@@ -29,26 +29,34 @@ fn group_by_distance(symbols: &[Symbol]) -> Vec<DistanceGroup> {
 pub fn encode(p: &Payload) -> String {
     let mut b = String::new();
 
+    // Build symbol index for edge references.
+    let mut sym_index: HashMap<&str, usize> = HashMap::new();
+    for (i, s) in p.symbols.iter().enumerate() {
+        sym_index.insert(&s.qualified_name, i);
+    }
+
+    // Count valid edges (both endpoints in symbol index).
+    let valid_edges = p
+        .edges
+        .iter()
+        .filter(|e| sym_index.contains_key(e.source.as_str()) && sym_index.contains_key(e.target.as_str()))
+        .count();
+
     // Header line.
     write!(
         b,
-        "GCF tool={} budget={} tokens={} symbols={}",
+        "GCF tool={} budget={} tokens={} symbols={} edges={}",
         p.tool,
         p.token_budget,
         p.tokens_used,
-        p.symbols.len()
+        p.symbols.len(),
+        valid_edges
     )
     .unwrap();
     if !p.pack_root.is_empty() {
         write!(b, " pack_root={}", p.pack_root).unwrap();
     }
     b.push('\n');
-
-    // Build symbol index for edge references.
-    let mut sym_index: HashMap<&str, usize> = HashMap::new();
-    for (i, s) in p.symbols.iter().enumerate() {
-        sym_index.insert(&s.qualified_name, i);
-    }
 
     // Group symbols by distance.
     let groups = group_by_distance(&p.symbols);
@@ -79,7 +87,7 @@ pub fn encode(p: &Payload) -> String {
 
     // Edges section.
     if !p.edges.is_empty() {
-        b.push_str("## edges\n");
+        writeln!(b, "## edges [{}]", valid_edges).unwrap();
         for e in &p.edges {
             let src_idx = sym_index.get(e.source.as_str());
             let tgt_idx = sym_index.get(e.target.as_str());
@@ -138,12 +146,12 @@ mod tests {
 
         let output = encode(&p);
         let expected = "\
-GCF tool=context_for_task budget=5000 tokens=1847 symbols=2
+GCF tool=context_for_task budget=5000 tokens=1847 symbols=2 edges=1
 ## targets
 @0 fn pkg.AuthMiddleware 0.78 lsp_resolved
 ## related
 @1 fn pkg.NewServer 0.54 lsp_resolved
-## edges
+## edges [1]
 @0<@1 calls
 ";
         assert_eq!(output, expected);

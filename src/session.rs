@@ -100,26 +100,34 @@ fn group_by_distance(symbols: &[Symbol]) -> Vec<DistanceGroup> {
 pub fn encode_with_session(p: &Payload, sess: &Session) -> String {
     let mut b = String::new();
 
+    // Build local ID mapping for this response.
+    let mut local_index: HashMap<&str, usize> = HashMap::new();
+    for (i, s) in p.symbols.iter().enumerate() {
+        local_index.insert(&s.qualified_name, i);
+    }
+
+    // Count valid edges.
+    let valid_edges = p
+        .edges
+        .iter()
+        .filter(|e| local_index.contains_key(e.source.as_str()) && local_index.contains_key(e.target.as_str()))
+        .count();
+
     // Header with session=true marker.
     write!(
         b,
-        "GCF tool={} budget={} tokens={} symbols={} session=true",
+        "GCF tool={} budget={} tokens={} symbols={} edges={} session=true",
         p.tool,
         p.token_budget,
         p.tokens_used,
-        p.symbols.len()
+        p.symbols.len(),
+        valid_edges
     )
     .unwrap();
     if !p.pack_root.is_empty() {
         write!(b, " pack_root={}", p.pack_root).unwrap();
     }
     b.push('\n');
-
-    // Build local ID mapping for this response.
-    let mut local_index: HashMap<&str, usize> = HashMap::new();
-    for (i, s) in p.symbols.iter().enumerate() {
-        local_index.insert(&s.qualified_name, i);
-    }
 
     // Track which symbols are new.
     let is_new: Vec<bool> = p
@@ -161,7 +169,7 @@ pub fn encode_with_session(p: &Payload, sess: &Session) -> String {
 
     // Edges section.
     if !p.edges.is_empty() {
-        b.push_str("## edges\n");
+        writeln!(b, "## edges [{}]", valid_edges).unwrap();
         for e in &p.edges {
             let src_idx = local_index.get(e.source.as_str());
             let tgt_idx = local_index.get(e.target.as_str());

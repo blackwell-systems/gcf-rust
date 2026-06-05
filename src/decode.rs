@@ -72,7 +72,12 @@ pub fn decode(input: &str) -> Result<Payload, DecodeError> {
         }
 
         // Group header.
-        if let Some(group) = line.strip_prefix("## ") {
+        if let Some(raw_group) = line.strip_prefix("## ") {
+            // Strip bracket suffix: "edges [200]" -> "edges"
+            let group = match raw_group.find(" [") {
+                Some(idx) => &raw_group[..idx],
+                None => raw_group,
+            };
             if group == "edges" {
                 in_edges = true;
             } else {
