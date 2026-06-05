@@ -115,7 +115,15 @@ fn encode_array(arr: &[Value], name: &str, lines: &mut Vec<String>, depth: usize
         return;
     }
 
-    // Non-uniform array.
+    // Primitive array: inline as comma-separated values.
+    let all_primitive = arr.iter().all(|item| !is_object(item) && !is_array(item));
+    if all_primitive {
+        let vals: Vec<String> = arr.iter().map(|item| format_value(item)).collect();
+        lines.push(format!("{}{}[{}]: {}", prefix, name, arr.len(), vals.join(",")));
+        return;
+    }
+
+    // Non-uniform with objects: per-item encoding.
     lines.push(format!("{}## {} [{}]", prefix, name, arr.len()));
     for (i, item) in arr.iter().enumerate() {
         if is_object(item) {
@@ -336,7 +344,7 @@ mod tests {
         // Should have @N prefix because of nested fields
         assert!(output.contains("@0 Alice"));
         assert!(output.contains("@1 Bob"));
-        assert!(output.contains("## tags"));
+        assert!(output.contains("tags["));
     }
 
     #[test]
@@ -345,10 +353,7 @@ mod tests {
             "items": [1, "two", true]
         });
         let output = encode_generic(&data);
-        assert!(output.contains("## items [3]"));
-        assert!(output.contains("@0 1"));
-        assert!(output.contains("@1 two"));
-        assert!(output.contains("@2 true"));
+        assert!(output.contains("items[3]: 1,two,true"));
     }
 
     #[test]
