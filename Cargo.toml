@@ -2,7 +2,7 @@
 name = "gcf"
 version = "0.5.0"
 edition = "2021"
-description = "Rust implementation of GCF (Graph Compact Format) — token-optimized wire format for LLMs"
+description = "Drop-in JSON replacement for AI pipelines. 79% fewer tokens. 90.5% comprehension across 10 models. Zero dependencies."
 license = "MIT"
 repository = "https://github.com/blackwell-systems/gcf-rust"
 homepage = "https://gcformat.com/"
