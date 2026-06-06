@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.5.0 (2026-06-05)
+
+- `decode_generic`: parse GCF tabular text into `serde_json::Value` (tabular arrays, key-value, nested sections, inline arrays, nested row fields, empty arrays, graph fallback)
+
 ## v0.3.0 (2026-06-05)
 
 - `encode_generic`: primitive arrays inlined as `name[N]: val1,val2,val3`

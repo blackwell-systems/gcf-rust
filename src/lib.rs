@@ -37,6 +37,7 @@
 //! ```
 
 pub mod decode;
+pub mod decode_generic;
 pub mod delta;
 pub mod encode;
 pub mod generic;
@@ -45,6 +46,7 @@ pub mod stream;
 pub mod types;
 
 pub use decode::{decode, DecodeError};
+pub use decode_generic::decode_generic;
 pub use delta::encode_delta;
 pub use encode::encode;
 pub use generic::encode_generic;
