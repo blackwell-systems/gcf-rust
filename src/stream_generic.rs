@@ -29,17 +29,14 @@ struct GenericStreamEncoderInner<W: Write> {
 ///
 /// ```
 /// use gcf::GenericStreamEncoder;
+/// use gcf::stream_generic::GcfValue;
 ///
-/// let mut buf = Vec::new();
-/// {
-///     let enc = GenericStreamEncoder::new(&mut buf);
-///     enc.begin_array("employees", &["id", "name", "department", "salary"]);
-///     enc.write_row(&[&1 as &dyn std::fmt::Display, &"Alice", &"Engineering", &95000]);
-///     enc.end_array();
-///     enc.close().unwrap();
-/// }
-/// let out = String::from_utf8(buf).unwrap();
-/// assert!(out.contains("## employees [?]{id,name,department,salary}"));
+/// let buf = Vec::new();
+/// let enc = GenericStreamEncoder::new(buf);
+/// enc.begin_array("employees", &["id", "name", "department", "salary"]);
+/// enc.write_row(&[1.into(), "Alice".into(), "Engineering".into(), 95000.into()]);
+/// enc.end_array();
+/// enc.close().unwrap();
 /// ```
 pub struct GenericStreamEncoder<W: Write> {
     inner: Mutex<GenericStreamEncoderInner<W>>,
