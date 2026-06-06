@@ -25,41 +25,43 @@ Zero-copy where possible. Minimal dependencies (serde, serde_json). Don't want t
 ## Quick Start
 
 ```rust
-use gcf::{Payload, Symbol, Edge, encode, decode};
+use gcf::encode_generic;
+use serde_json::json;
+
+let data = json!({
+    "employees": [
+        {"id": 1, "name": "Alice", "department": "Engineering", "salary": 95000},
+        {"id": 2, "name": "Bob", "department": "Sales", "salary": 72000},
+    ],
+});
+let output = encode_generic(&data);
+```
+
+Output:
+```
+## employees [2]{department,id,name,salary}
+Engineering|1|Alice|95000
+Sales|2|Bob|72000
+```
+
+Works on any `serde_json::Value`. One header declares field names, rows are positional values.
+
+## Graph Profile
+
+For code graph data with symbols, edges, and distance groups:
+
+```rust
+use gcf::{Payload, Symbol, Edge, encode};
 
 let p = Payload {
-    tool: "context_for_task".to_string(),
-    token_budget: 5000,
-    tokens_used: 1847,
-    pack_root: String::new(),
+    tool: "context_for_task".into(), token_budget: 5000, tokens_used: 1847,
     symbols: vec![
-        Symbol {
-            qualified_name: "pkg.AuthMiddleware".to_string(),
-            kind: "function".to_string(),
-            score: 0.78,
-            provenance: "lsp_resolved".to_string(),
-            distance: 0,
-            signature: String::new(),
-            components: Default::default(),
-        },
-        Symbol {
-            qualified_name: "pkg.NewServer".to_string(),
-            kind: "function".to_string(),
-            score: 0.54,
-            provenance: "lsp_resolved".to_string(),
-            distance: 1,
-            signature: String::new(),
-            components: Default::default(),
-        },
+        Symbol { qualified_name: "pkg.Auth".into(), kind: "function".into(), score: 0.78, provenance: "lsp".into(), distance: 0, ..Default::default() },
+        Symbol { qualified_name: "pkg.Server".into(), kind: "function".into(), score: 0.54, provenance: "lsp".into(), distance: 1, ..Default::default() },
     ],
-    edges: vec![Edge {
-        source: "pkg.NewServer".to_string(),
-        target: "pkg.AuthMiddleware".to_string(),
-        edge_type: "calls".to_string(),
-        status: String::new(),
-    }],
+    edges: vec![Edge { source: "pkg.Server".into(), target: "pkg.Auth".into(), edge_type: "calls".into(), ..Default::default() }],
+    ..Default::default()
 };
-
 let output = encode(&p);
 ```
 
@@ -67,9 +69,9 @@ Output:
 ```
 GCF tool=context_for_task budget=5000 tokens=1847 symbols=2 edges=1
 ## targets
-@0 fn pkg.AuthMiddleware 0.78 lsp_resolved
+@0 fn pkg.Auth 0.78 lsp
 ## related
-@1 fn pkg.NewServer 0.54 lsp_resolved
+@1 fn pkg.Server 0.54 lsp
 ## edges [1]
 @0<@1 calls
 ```
