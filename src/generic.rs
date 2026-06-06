@@ -119,7 +119,13 @@ fn encode_array(arr: &[Value], name: &str, lines: &mut Vec<String>, depth: usize
     let all_primitive = arr.iter().all(|item| !is_object(item) && !is_array(item));
     if all_primitive {
         let vals: Vec<String> = arr.iter().map(format_value).collect();
-        lines.push(format!("{}{}[{}]: {}", prefix, name, arr.len(), vals.join(",")));
+        lines.push(format!(
+            "{}{}[{}]: {}",
+            prefix,
+            name,
+            arr.len(),
+            vals.join(",")
+        ));
         return;
     }
 
