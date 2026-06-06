@@ -43,6 +43,7 @@ pub mod encode;
 pub mod generic;
 pub mod session;
 pub mod stream;
+pub mod stream_generic;
 pub mod types;
 
 pub use decode::{decode, DecodeError};
@@ -52,6 +53,7 @@ pub use encode::encode;
 pub use generic::encode_generic;
 pub use session::{encode_with_session, Session};
 pub use stream::{StreamEncoder, StreamOptions};
+pub use stream_generic::GenericStreamEncoder;
 pub use types::{Components, DeltaPayload, Edge, Payload, Symbol};
 
 use std::collections::HashMap;

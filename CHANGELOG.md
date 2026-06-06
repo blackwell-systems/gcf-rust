@@ -2,6 +2,7 @@
 
 ## v0.5.0 (2026-06-05)
 
+- `GenericStreamEncoder`: zero-buffering tabular streaming encode (begin_array/write_row/end_array/write_kv/write_section/write_inline_array)
 - `decode_generic`: parse GCF tabular text into `serde_json::Value` (tabular arrays, key-value, nested sections, inline arrays, nested row fields, empty arrays, graph fallback)
 
 ## v0.3.0 (2026-06-05)
