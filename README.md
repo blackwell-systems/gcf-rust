@@ -98,6 +98,25 @@ let out2 = encode_with_session(&payload2, &sess); // reused symbols as "@N  # pr
 
 By the 5th call in a session: 92.7% token savings vs JSON.
 
+## Streaming Encode
+
+Write GCF output incrementally as symbols and edges arrive. Zero buffering, O(1) memory per row:
+
+```rust
+use gcf::{StreamEncoder, StreamOptions, Symbol, Edge};
+
+let enc = StreamEncoder::new(writer, "context_for_task", StreamOptions {
+    token_budget: 5000,
+    ..Default::default()
+});
+
+enc.write_symbol(&Symbol { qualified_name: "pkg.Auth".into(), kind: "function".into(), score: 0.95, provenance: "lsp".into(), distance: 0, ..Default::default() });
+enc.write_edge(&Edge { source: "pkg.Server".into(), target: "pkg.Auth".into(), edge_type: "calls".into(), ..Default::default() });
+enc.close();
+```
+
+Output uses `[?]` deferred counts and `## _summary` trailer. Standard `decode()` handles streaming output with no changes. Thread-safe via Mutex.
+
 ## Delta Encoding
 
 When the consumer already has a prior context pack, send only what changed:
