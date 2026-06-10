@@ -232,8 +232,15 @@ GCF wins all 6 datasets on [TOON's own benchmark](https://github.com/blackwell-s
 - [MCP Proxy](https://github.com/blackwell-systems/gcf-proxy) (zero-code adoption)
 - [GCF vs TOON](https://gcformat.com/guide/vs-toon.html)
 
+
+<details>
+<summary>More links</summary>
+
 - [betterthanjson.com](https://betterthanjson.com)
 - [jsonalternative.com](https://jsonalternative.com)
+- [betterthantoon.com](https://betterthantoon.com)
+
+</details>
 
 ## License
 
