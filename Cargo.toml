@@ -1,8 +1,8 @@
 [package]
 name = "gcf"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
-description = "Drop-in JSON replacement for AI pipelines. 79% fewer tokens. 90.5% comprehension across 10 models. Zero dependencies."
+description = "Drop-in JSON replacement for AI pipelines. 79% fewer tokens. 90.7% comprehension across 10 models. Zero dependencies."
 license = "MIT"
 repository = "https://github.com/blackwell-systems/gcf-rust"
 homepage = "https://gcformat.com/"
