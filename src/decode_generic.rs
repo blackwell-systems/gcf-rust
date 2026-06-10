@@ -230,7 +230,7 @@ fn parse_array_from_header(
     if after.starts_with(": ") || after == ":" {
         let vals_str = if after.starts_with(": ") { after.strip_prefix(": ").unwrap() } else { "" };
         if vals_str.is_empty() {
-            if count >= 0 && count != 0 {
+            if count > 0 {
                 return Err(format!("count_mismatch: declared {}, got 0", count));
             }
             return Ok((Value::Array(vec![]), 1));
