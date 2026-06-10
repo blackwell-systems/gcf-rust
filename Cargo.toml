@@ -10,6 +10,14 @@ keywords = ["gcf", "llm", "mcp", "tokens", "wire-format"]
 categories = ["encoding", "data-structures"]
 readme = "README.md"
 
+[lib]
+name = "gcf"
+path = "src/lib.rs"
+
+[[bin]]
+name = "gcf"
+path = "src/main.rs"
+
 [dependencies]
 regex = "1"
 serde = { version = "1", features = ["derive"] }
