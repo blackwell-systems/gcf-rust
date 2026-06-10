@@ -6,8 +6,7 @@ use std::sync::LazyLock;
 static JSON_NUMBER_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$").unwrap());
 
-static NUMERIC_LIKE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[+-]?\.?\d").unwrap());
+static NUMERIC_LIKE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[+-]?\.?\d").unwrap());
 
 static BARE_KEY_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*$").unwrap());
@@ -25,16 +24,33 @@ pub enum ScalarValue {
 }
 
 pub fn needs_quote(s: &str) -> bool {
-    if s.is_empty() { return true; }
-    if matches!(s, "-" | "~" | "^" | "true" | "false") { return true; }
-    if JSON_NUMBER_RE.is_match(s) { return true; }
-    if NUMERIC_LIKE_RE.is_match(s) { return true; }
+    if s.is_empty() {
+        return true;
+    }
+    if matches!(s, "-" | "~" | "^" | "true" | "false") {
+        return true;
+    }
+    if JSON_NUMBER_RE.is_match(s) {
+        return true;
+    }
+    if NUMERIC_LIKE_RE.is_match(s) {
+        return true;
+    }
     let bytes = s.as_bytes();
-    if bytes[0] == b' ' || bytes[bytes.len() - 1] == b' ' { return true; }
-    if bytes[0] == b'#' || bytes[0] == b'@' { return true; }
+    if bytes[0] == b' ' || bytes[bytes.len() - 1] == b' ' {
+        return true;
+    }
+    if bytes[0] == b'#' || bytes[0] == b'@' {
+        return true;
+    }
     for c in s.chars() {
-        if c == '"' || c == '\\' || c == '|' || c == ',' || (c as u32) < 0x20
-            || c == '\n' || c == '\r'
+        if c == '"'
+            || c == '\\'
+            || c == '|'
+            || c == ','
+            || (c as u32) < 0x20
+            || c == '\n'
+            || c == '\r'
         {
             return true;
         }
@@ -89,7 +105,9 @@ pub fn format_number(n: &serde_json::Number) -> String {
     }
     if let Some(f) = n.as_f64() {
         if f == 0.0 {
-            if f.is_sign_negative() { return "-0".to_string(); }
+            if f.is_sign_negative() {
+                return "-0".to_string();
+            }
             return "0".to_string();
         }
         let abs = f.abs();
@@ -127,29 +145,50 @@ pub fn is_bare_key(s: &str) -> bool {
 }
 
 pub fn format_key(s: &str) -> String {
-    if is_bare_key(s) { s.to_string() } else { quote_string(s) }
+    if is_bare_key(s) {
+        s.to_string()
+    } else {
+        quote_string(s)
+    }
 }
 
 pub fn parse_scalar(s: &str, tabular_context: bool) -> Result<ScalarValue, String> {
-    if s.is_empty() { return Ok(ScalarValue::Str(String::new())); }
-    if s.starts_with('"') { return parse_quoted_string(s).map(ScalarValue::Str); }
-    if s == "-" { return Ok(ScalarValue::Null); }
+    if s.is_empty() {
+        return Ok(ScalarValue::Str(String::new()));
+    }
+    if s.starts_with('"') {
+        return parse_quoted_string(s).map(ScalarValue::Str);
+    }
+    if s == "-" {
+        return Ok(ScalarValue::Null);
+    }
     if s == "~" {
-        if !tabular_context { return Err("invalid_missing: ~ outside tabular row cell".into()); }
+        if !tabular_context {
+            return Err("invalid_missing: ~ outside tabular row cell".into());
+        }
         return Ok(ScalarValue::Missing);
     }
     if s == "^" {
-        if !tabular_context { return Err("invalid_attachment_marker: ^ outside tabular row cell".into()); }
+        if !tabular_context {
+            return Err("invalid_attachment_marker: ^ outside tabular row cell".into());
+        }
         return Ok(ScalarValue::Attachment);
     }
-    if s == "true" { return Ok(ScalarValue::Bool(true)); }
-    if s == "false" { return Ok(ScalarValue::Bool(false)); }
+    if s == "true" {
+        return Ok(ScalarValue::Bool(true));
+    }
+    if s == "false" {
+        return Ok(ScalarValue::Bool(false));
+    }
     if JSON_NUMBER_RE.is_match(s) {
         if let Ok(f) = s.parse::<f64>() {
-            if !s.contains('.') && !s.contains('e') && !s.contains('E')
-                && f.abs() <= (1i64 << 53) as f64 {
-                    return Ok(ScalarValue::Int(f as i64));
-                }
+            if !s.contains('.')
+                && !s.contains('e')
+                && !s.contains('E')
+                && f.abs() <= (1i64 << 53) as f64
+            {
+                return Ok(ScalarValue::Int(f as i64));
+            }
             return Ok(ScalarValue::Float(f));
         }
     }
@@ -171,7 +210,9 @@ pub fn parse_quoted_string(s: &str) -> Result<String, String> {
             return Ok(out);
         }
         if bytes[i] == b'\\' {
-            if i + 1 >= bytes.len() { return Err("unterminated_quote".into()); }
+            if i + 1 >= bytes.len() {
+                return Err("unterminated_quote".into());
+            }
             i += 1;
             match bytes[i] {
                 b'"' => out.push('"'),
@@ -183,7 +224,9 @@ pub fn parse_quoted_string(s: &str) -> Result<String, String> {
                 b'r' => out.push('\r'),
                 b't' => out.push('\t'),
                 b'u' => {
-                    if i + 4 >= bytes.len() { return Err("invalid_escape: incomplete unicode".into()); }
+                    if i + 4 >= bytes.len() {
+                        return Err("invalid_escape: incomplete unicode".into());
+                    }
                     let hex = &s[i + 1..i + 5];
                     let code = u16::from_str_radix(hex, 16)
                         .map_err(|_| format!("invalid_escape: invalid unicode \\u{}", hex))?;
@@ -192,12 +235,14 @@ pub fn parse_quoted_string(s: &str) -> Result<String, String> {
                             return Err("invalid_surrogate: isolated high surrogate".into());
                         }
                         let hex2 = &s[i + 7..i + 11];
-                        let low = u16::from_str_radix(hex2, 16)
-                            .map_err(|_| format!("invalid_surrogate: invalid low surrogate \\u{}", hex2))?;
+                        let low = u16::from_str_radix(hex2, 16).map_err(|_| {
+                            format!("invalid_surrogate: invalid low surrogate \\u{}", hex2)
+                        })?;
                         if !(0xDC00..=0xDFFF).contains(&low) {
                             return Err("invalid_surrogate: expected low surrogate".into());
                         }
-                        let combined = 0x10000 + (code as u32 - 0xD800) * 0x400 + (low as u32 - 0xDC00);
+                        let combined =
+                            0x10000 + (code as u32 - 0xD800) * 0x400 + (low as u32 - 0xDC00);
                         out.push(char::from_u32(combined).ok_or("invalid_surrogate")?);
                         i += 11;
                         continue;
@@ -215,7 +260,10 @@ pub fn parse_quoted_string(s: &str) -> Result<String, String> {
             continue;
         }
         if bytes[i] < 0x20 {
-            return Err(format!("invalid_escape: unescaped control U+{:04x}", bytes[i]));
+            return Err(format!(
+                "invalid_escape: unescaped control U+{:04x}",
+                bytes[i]
+            ));
         }
         out.push(bytes[i] as char);
         i += 1;
@@ -229,10 +277,26 @@ pub fn split_respecting_quotes(s: &str, delim: char) -> Vec<String> {
     let mut in_quote = false;
     let mut escaped = false;
     for c in s.chars() {
-        if escaped { current.push(c); escaped = false; continue; }
-        if c == '\\' && in_quote { current.push(c); escaped = true; continue; }
-        if c == '"' { in_quote = !in_quote; current.push(c); continue; }
-        if c == delim && !in_quote { parts.push(current.clone()); current.clear(); continue; }
+        if escaped {
+            current.push(c);
+            escaped = false;
+            continue;
+        }
+        if c == '\\' && in_quote {
+            current.push(c);
+            escaped = true;
+            continue;
+        }
+        if c == '"' {
+            in_quote = !in_quote;
+            current.push(c);
+            continue;
+        }
+        if c == delim && !in_quote {
+            parts.push(current.clone());
+            current.clear();
+            continue;
+        }
         current.push(c);
     }
     parts.push(current);
@@ -245,7 +309,9 @@ pub fn split_field_decl(s: &str) -> Result<Vec<String>, String> {
     }
     let close = find_closing_brace(s).ok_or_else(|| format!("invalid field declaration: {}", s))?;
     let inner = &s[1..close];
-    if inner.is_empty() { return Ok(Vec::new()); }
+    if inner.is_empty() {
+        return Ok(Vec::new());
+    }
     let raw = split_respecting_quotes(inner, ',');
     let mut fields = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -254,7 +320,9 @@ pub fn split_field_decl(s: &str) -> Result<Vec<String>, String> {
         let name = if f.len() >= 2 && f.starts_with('"') && f.ends_with('"') {
             parse_quoted_string(f)?
         } else {
-            if !is_bare_key(f) { return Err(format!("invalid field name: {}", f)); }
+            if !is_bare_key(f) {
+                return Err(format!("invalid field name: {}", f));
+            }
             f.to_string()
         };
         if !seen.insert(name.clone()) {
@@ -269,10 +337,21 @@ pub fn find_closing_brace(s: &str) -> Option<usize> {
     let mut in_quote = false;
     let mut escaped = false;
     for (i, c) in s.chars().enumerate() {
-        if escaped { escaped = false; continue; }
-        if c == '\\' && in_quote { escaped = true; continue; }
-        if c == '"' { in_quote = !in_quote; continue; }
-        if c == '}' && !in_quote { return Some(i); }
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if c == '\\' && in_quote {
+            escaped = true;
+            continue;
+        }
+        if c == '"' {
+            in_quote = !in_quote;
+            continue;
+        }
+        if c == '}' && !in_quote {
+            return Some(i);
+        }
     }
     None
 }

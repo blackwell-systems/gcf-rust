@@ -1,6 +1,6 @@
 //! Conformance tests for GCF v2.0 (133 fixtures).
 
-use gcf::{encode_generic, decode_generic};
+use gcf::{decode_generic, encode_generic};
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
@@ -39,7 +39,11 @@ fn walk_dir(base: &Path, dir: &Path, fixtures: &mut Vec<(String, Fixture)>) {
             if path.is_dir() {
                 walk_dir(base, &path, fixtures);
             } else if path.extension().map_or(false, |e| e == "json") {
-                let rel = path.strip_prefix(base).unwrap().to_string_lossy().to_string();
+                let rel = path
+                    .strip_prefix(base)
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string();
                 let data = fs::read_to_string(&path).unwrap();
                 if let Ok(fix) = serde_json::from_str::<Fixture>(&data) {
                     fixtures.push((rel, fix));
@@ -51,9 +55,9 @@ fn walk_dir(base: &Path, dir: &Path, fixtures: &mut Vec<(String, Fixture)>) {
 
 fn json_subset(expected: &Value, got: &Value) -> bool {
     match (expected, got) {
-        (Value::Object(e), Value::Object(g)) => {
-            e.iter().all(|(k, v)| g.get(k).map_or(false, |gv| json_subset(v, gv)))
-        }
+        (Value::Object(e), Value::Object(g)) => e
+            .iter()
+            .all(|(k, v)| g.get(k).map_or(false, |gv| json_subset(v, gv))),
         (Value::Array(e), Value::Array(g)) => {
             e.len() == g.len() && e.iter().zip(g).all(|(a, b)| json_subset(a, b))
         }
@@ -73,9 +77,7 @@ fn structural_equal(a: &Value, b: &Value) -> bool {
         (Value::Array(aa), Value::Array(ba)) => {
             aa.len() == ba.len() && aa.iter().zip(ba).all(|(x, y)| structural_equal(x, y))
         }
-        (Value::Number(an), Value::Number(bn)) => {
-            an.as_f64() == bn.as_f64()
-        }
+        (Value::Number(an), Value::Number(bn)) => an.as_f64() == bn.as_f64(),
         _ => a == b,
     }
 }
@@ -94,28 +96,47 @@ fn test_conformance_v2() {
 
     for (rel_path, fix) in &fixtures {
         match fix.operation.as_str() {
-            "session" | "delta" => { skipped += 1; continue; }
+            "session" | "delta" => {
+                skipped += 1;
+                continue;
+            }
             _ => {}
         }
-        if fix.input_base64.is_some() { skipped += 1; continue; }
-        if rel_path.contains("negative_zero") { skipped += 1; continue; }
+        if fix.input_base64.is_some() {
+            skipped += 1;
+            continue;
+        }
+        if rel_path.contains("negative_zero") {
+            skipped += 1;
+            continue;
+        }
 
         match fix.operation.as_str() {
             "encode" => {
                 let expected_str = match &fix.expected {
                     Some(Value::String(s)) => s.clone(),
-                    _ => { skipped += 1; continue; }
+                    _ => {
+                        skipped += 1;
+                        continue;
+                    }
                 };
                 if expected_str.starts_with("GCF profile=graph") {
-                    skipped += 1; continue; // Graph encode handled separately
+                    skipped += 1;
+                    continue; // Graph encode handled separately
                 }
                 let input = match fix.input.as_ref() {
                     Some(v) => v,
-                    None => { skipped += 1; continue; }
+                    None => {
+                        skipped += 1;
+                        continue;
+                    }
                 };
                 let got = encode_generic(input);
                 if got != expected_str {
-                    eprintln!("FAIL {}: encode mismatch\n  got: {:?}\n  exp: {:?}", rel_path, got, expected_str);
+                    eprintln!(
+                        "FAIL {}: encode mismatch\n  got: {:?}\n  exp: {:?}",
+                        rel_path, got, expected_str
+                    );
                     failed += 1;
                     continue;
                 }
@@ -123,7 +144,10 @@ fn test_conformance_v2() {
                 match decode_generic(&got) {
                     Ok(decoded) => {
                         if !structural_equal(input, &decoded) {
-                            eprintln!("FAIL {}: round-trip mismatch\n  input: {}\n  decoded: {}", rel_path, input, decoded);
+                            eprintln!(
+                                "FAIL {}: round-trip mismatch\n  input: {}\n  decoded: {}",
+                                rel_path, input, decoded
+                            );
                             failed += 1;
                             continue;
                         }
@@ -139,16 +163,25 @@ fn test_conformance_v2() {
             "decode" => {
                 let input_str = match &fix.input {
                     Some(Value::String(s)) => s.clone(),
-                    _ => { skipped += 1; continue; }
+                    _ => {
+                        skipped += 1;
+                        continue;
+                    }
                 };
                 match decode_generic(&input_str) {
                     Ok(got) => {
                         let expected = match fix.expected.as_ref() {
                             Some(v) => v,
-                            None => { passed += 1; continue; }
+                            None => {
+                                passed += 1;
+                                continue;
+                            }
                         };
                         if !json_subset(expected, &got) {
-                            eprintln!("FAIL {}: decode mismatch\n  got: {}\n  exp: {}", rel_path, got, expected);
+                            eprintln!(
+                                "FAIL {}: decode mismatch\n  got: {}\n  exp: {}",
+                                rel_path, got, expected
+                            );
                             failed += 1;
                         } else {
                             passed += 1;
@@ -163,20 +196,32 @@ fn test_conformance_v2() {
             "error" => {
                 let input_str = match &fix.input {
                     Some(Value::String(s)) => s.clone(),
-                    _ => { skipped += 1; continue; }
+                    _ => {
+                        skipped += 1;
+                        continue;
+                    }
                 };
                 let expected_error = match fix.expected_error.as_ref() {
                     Some(e) => e,
-                    None => { skipped += 1; continue; }
+                    None => {
+                        skipped += 1;
+                        continue;
+                    }
                 };
                 match decode_generic(&input_str) {
                     Ok(_) => {
-                        eprintln!("FAIL {}: expected error '{}', got success", rel_path, expected_error);
+                        eprintln!(
+                            "FAIL {}: expected error '{}', got success",
+                            rel_path, expected_error
+                        );
                         failed += 1;
                     }
                     Err(e) => {
                         if !e.contains(expected_error) {
-                            eprintln!("FAIL {}: wrong error\n  got: {}\n  expected: {}", rel_path, e, expected_error);
+                            eprintln!(
+                                "FAIL {}: wrong error\n  got: {}\n  expected: {}",
+                                rel_path, e, expected_error
+                            );
                             failed += 1;
                         } else {
                             passed += 1;
@@ -184,10 +229,18 @@ fn test_conformance_v2() {
                     }
                 }
             }
-            _ => { skipped += 1; }
+            _ => {
+                skipped += 1;
+            }
         }
     }
 
-    eprintln!("Conformance: {} passed, {} skipped, {} failed (out of {})", passed, skipped, failed, fixtures.len());
+    eprintln!(
+        "Conformance: {} passed, {} skipped, {} failed (out of {})",
+        passed,
+        skipped,
+        failed,
+        fixtures.len()
+    );
     assert_eq!(failed, 0, "{} conformance tests failed", failed);
 }

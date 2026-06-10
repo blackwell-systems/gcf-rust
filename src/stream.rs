@@ -178,7 +178,9 @@ impl<W: Write> StreamEncoder<W> {
         writeln!(
             inner.w,
             "##! summary symbols={} edges={} counts={}",
-            symbol_count, edge_count, counts.join(",")
+            symbol_count,
+            edge_count,
+            counts.join(",")
         )
         .unwrap();
     }

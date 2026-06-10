@@ -22,7 +22,9 @@ impl fmt::Display for DecodeError {
             DecodeError::InvalidHeader(h) => {
                 write!(f, "gcf: invalid header, expected 'GCF ...' got {:?}", h)
             }
-            DecodeError::MissingTool => write!(f, "missing_tool: header missing required 'tool' field"),
+            DecodeError::MissingTool => {
+                write!(f, "missing_tool: header missing required 'tool' field")
+            }
             DecodeError::InvalidField(msg) => write!(f, "gcf: {}", msg),
             DecodeError::InvalidSymbolLine(msg) => write!(f, "invalid_node_line: {}", msg),
             DecodeError::InvalidEdgeLine(msg) => write!(f, "invalid_edge_syntax: {}", msg),
@@ -66,7 +68,10 @@ pub fn decode(input: &str) -> Result<Payload, DecodeError> {
     let mut in_edges = false;
     let is_delta = header.contains("delta=true");
     let valid_delta_sections: std::collections::HashSet<&str> =
-        ["removed", "added", "edges_removed", "edges_added"].iter().copied().collect();
+        ["removed", "added", "edges_removed", "edges_added"]
+            .iter()
+            .copied()
+            .collect();
 
     for &line in &lines[1..] {
         let line = line.trim_end_matches('\r');
@@ -75,7 +80,9 @@ pub fn decode(input: &str) -> Result<Payload, DecodeError> {
         }
 
         // Skip ##! summary trailer.
-        if line.starts_with("##! ") { continue; }
+        if line.starts_with("##! ") {
+            continue;
+        }
 
         // Group header.
         if let Some(raw_group) = line.strip_prefix("## ") {
@@ -85,7 +92,10 @@ pub fn decode(input: &str) -> Result<Payload, DecodeError> {
                 None => raw_group,
             };
             if is_delta && !valid_delta_sections.contains(group) {
-                return Err(DecodeError::InvalidField(format!("malformed_delta: invalid delta section {:?}", group)));
+                return Err(DecodeError::InvalidField(format!(
+                    "malformed_delta: invalid delta section {:?}",
+                    group
+                )));
             }
             if group == "edges" {
                 in_edges = true;

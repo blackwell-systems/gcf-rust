@@ -2,8 +2,8 @@
 
 use crate::decode::decode;
 use crate::scalar::{
-    parse_scalar, parse_quoted_string, split_respecting_quotes, split_field_decl,
-    find_closing_brace, ScalarValue,
+    find_closing_brace, parse_quoted_string, parse_scalar, split_field_decl,
+    split_respecting_quotes, ScalarValue,
 };
 use serde_json::{Map, Number, Value};
 
@@ -38,16 +38,29 @@ pub fn decode_generic(input: &str) -> Result<Value, String> {
 
     for line in &lines[1..] {
         let line = line.trim_end_matches('\r');
-        if line.is_empty() { continue; }
+        if line.is_empty() {
+            continue;
+        }
         // Tab check.
         for c in line.chars() {
-            if c == '\t' { return Err("tab_indentation: tabs in leading whitespace".into()); }
-            if c != ' ' { break; }
+            if c == '\t' {
+                return Err("tab_indentation: tabs in leading whitespace".into());
+            }
+            if c != ' ' {
+                break;
+            }
         }
         let trimmed = line.trim_start();
-        if trimmed.starts_with("# ") { continue; }
-        if trimmed.starts_with("##! ") { summary_line = trimmed.to_string(); continue; }
-        if trimmed.starts_with("## ") && trimmed.contains("[?]") { deferred_count += 1; }
+        if trimmed.starts_with("# ") {
+            continue;
+        }
+        if trimmed.starts_with("##! ") {
+            summary_line = trimmed.to_string();
+            continue;
+        }
+        if trimmed.starts_with("## ") && trimmed.contains("[?]") {
+            deferred_count += 1;
+        }
         content_lines.push(line.to_string());
     }
 
@@ -83,18 +96,26 @@ pub fn decode_generic(input: &str) -> Result<Value, String> {
 
 fn parse_header_profile(header: &str) -> Result<String, String> {
     let parts: Vec<&str> = header.split_whitespace().collect();
-    if parts.len() < 2 { return Err("missing_profile".into()); }
+    if parts.len() < 2 {
+        return Err("missing_profile".into());
+    }
     let mut seen = std::collections::HashSet::new();
     let mut profile = String::new();
     for p in &parts[1..] {
-        let eq = p.find('=').ok_or_else(|| format!("malformed_header_field: {}", p))?;
+        let eq = p
+            .find('=')
+            .ok_or_else(|| format!("malformed_header_field: {}", p))?;
         let key = &p[..eq];
         if !seen.insert(key.to_string()) {
             return Err(format!("duplicate_header_field: {}", key));
         }
-        if key == "profile" { profile = p[eq + 1..].to_string(); }
+        if key == "profile" {
+            profile = p[eq + 1..].to_string();
+        }
     }
-    if profile.is_empty() { return Err("missing_profile".into()); }
+    if profile.is_empty() {
+        return Err("missing_profile".into());
+    }
     Ok(profile)
 }
 
@@ -108,19 +129,30 @@ fn scalar_to_value(sv: &ScalarValue) -> Result<Value, String> {
         )),
         ScalarValue::Str(s) => Ok(Value::String(s.clone())),
         ScalarValue::Missing => Err("invalid_missing: ~ in non-tabular context".into()),
-        ScalarValue::Attachment => Err("invalid_attachment_marker: ^ in non-tabular context".into()),
+        ScalarValue::Attachment => {
+            Err("invalid_attachment_marker: ^ in non-tabular context".into())
+        }
     }
 }
 
 fn parse_object_body(
-    lines: &[String], start: usize, depth: usize, out: &mut Map<String, Value>,
+    lines: &[String],
+    start: usize,
+    depth: usize,
+    out: &mut Map<String, Value>,
 ) -> Result<usize, String> {
     let ind = "  ".repeat(depth);
     let mut i = start;
     while i < lines.len() {
         let line = &lines[i];
-        if depth > 0 && !line.starts_with(&ind) { break; }
-        let content = if depth > 0 { &line[ind.len()..] } else { line.as_str() };
+        if depth > 0 && !line.starts_with(&ind) {
+            break;
+        }
+        let content = if depth > 0 {
+            &line[ind.len()..]
+        } else {
+            line.as_str()
+        };
         if !content.is_empty() && content.starts_with(' ') {
             return Err("invalid_indent: indentation increases by more than one level".into());
         }
@@ -183,14 +215,23 @@ fn parse_object_body(
 }
 
 fn find_kv_split(s: &str) -> Option<usize> {
-    if s.is_empty() { return None; }
+    if s.is_empty() {
+        return None;
+    }
     let bytes = s.as_bytes();
     if bytes[0] == b'"' {
         let mut i = 1;
         while i < bytes.len() {
-            if bytes[i] == b'\\' { i += 2; continue; }
+            if bytes[i] == b'\\' {
+                i += 2;
+                continue;
+            }
             if bytes[i] == b'"' {
-                return if i + 1 < bytes.len() && bytes[i + 1] == b'=' { Some(i + 1) } else { None };
+                return if i + 1 < bytes.len() && bytes[i + 1] == b'=' {
+                    Some(i + 1)
+                } else {
+                    None
+                };
             }
             i += 1;
         }
@@ -209,18 +250,31 @@ fn parse_key_from_header(s: &str) -> Result<String, String> {
 }
 
 fn check_dup(map: &Map<String, Value>, key: &str) -> Result<(), String> {
-    if map.contains_key(key) { Err(format!("duplicate_key: {}", key)) } else { Ok(()) }
+    if map.contains_key(key) {
+        Err(format!("duplicate_key: {}", key))
+    } else {
+        Ok(())
+    }
 }
 
 fn parse_array_from_header(
-    lines: &[String], header_line: usize, depth: usize, bracket_part: &str,
+    lines: &[String],
+    header_line: usize,
+    depth: usize,
+    bracket_part: &str,
 ) -> Result<(Value, usize), String> {
     let bp = bracket_part.trim_start();
-    if !bp.starts_with('[') { return Err("invalid_count".into()); }
+    if !bp.starts_with('[') {
+        return Err("invalid_count".into());
+    }
     let close = bp.find(']').ok_or("invalid_count")?;
     let count_str = &bp[1..close];
     let after = &bp[close + 1..];
-    let count: i64 = if count_str == "?" { -1 } else { parse_count(count_str)? as i64 };
+    let count: i64 = if count_str == "?" {
+        -1
+    } else {
+        parse_count(count_str)? as i64
+    };
 
     if count == 0 && !after.starts_with('{') && !after.starts_with(':') {
         return Ok((Value::Array(vec![]), 1));
@@ -228,7 +282,11 @@ fn parse_array_from_header(
 
     // Inline.
     if after.starts_with(": ") || after == ":" {
-        let vals_str = if after.starts_with(": ") { after.strip_prefix(": ").unwrap() } else { "" };
+        let vals_str = if after.starts_with(": ") {
+            after.strip_prefix(": ").unwrap()
+        } else {
+            ""
+        };
         if vals_str.is_empty() {
             if count > 0 {
                 return Err(format!("count_mismatch: declared {}, got 0", count));
@@ -237,9 +295,14 @@ fn parse_array_from_header(
         }
         let vals = split_respecting_quotes(vals_str, ',');
         if count >= 0 && vals.len() as i64 != count {
-            return Err(format!("count_mismatch: declared {}, got {}", count, vals.len()));
+            return Err(format!(
+                "count_mismatch: declared {}, got {}",
+                count,
+                vals.len()
+            ));
         }
-        let parsed: Result<Vec<Value>, String> = vals.iter()
+        let parsed: Result<Vec<Value>, String> = vals
+            .iter()
             .map(|v| scalar_to_value(&parse_scalar(v.trim(), false)?))
             .collect();
         return Ok((Value::Array(parsed?), 1));
@@ -251,7 +314,11 @@ fn parse_array_from_header(
         let fields = split_field_decl(&after[..brace_end + 1])?;
         let (rows, consumed) = parse_tabular_body(lines, header_line + 1, depth, &fields, count)?;
         if count >= 0 && rows.len() as i64 != count {
-            return Err(format!("count_mismatch: declared {}, got {}", count, rows.len()));
+            return Err(format!(
+                "count_mismatch: declared {}, got {}",
+                count,
+                rows.len()
+            ));
         }
         return Ok((Value::Array(rows), consumed + 1));
     }
@@ -259,13 +326,21 @@ fn parse_array_from_header(
     // Expanded.
     let (items, consumed) = parse_expanded_body(lines, header_line + 1, depth)?;
     if count >= 0 && items.len() as i64 != count {
-        return Err(format!("count_mismatch: declared {}, got {}", count, items.len()));
+        return Err(format!(
+            "count_mismatch: declared {}, got {}",
+            count,
+            items.len()
+        ));
     }
     Ok((Value::Array(items), consumed + 1))
 }
 
 fn parse_tabular_body(
-    lines: &[String], start: usize, depth: usize, fields: &[String], expected_count: i64,
+    lines: &[String],
+    start: usize,
+    depth: usize,
+    fields: &[String],
+    expected_count: i64,
 ) -> Result<(Vec<Value>, usize), String> {
     let ind = "  ".repeat(depth);
     let mut rows: Vec<Value> = Vec::new();
@@ -274,12 +349,16 @@ fn parse_tabular_body(
     while i < lines.len() {
         let line = &lines[i];
         let content = if depth > 0 {
-            if !line.starts_with(&ind) { break; }
+            if !line.starts_with(&ind) {
+                break;
+            }
             &line[ind.len()..]
         } else {
             line.as_str()
         };
-        if content.starts_with("## ") || content.starts_with("##!") { break; }
+        if content.starts_with("## ") || content.starts_with("##!") {
+            break;
+        }
         if !content.is_empty() && content.starts_with(' ') {
             let trimmed = content.trim_start();
             if trimmed.starts_with('.') {
@@ -299,19 +378,30 @@ fn parse_tabular_body(
 
         let vals = split_respecting_quotes(row_data, '|');
         if vals.len() != fields.len() {
-            return Err(format!("row_width_mismatch: expected {}, got {}", fields.len(), vals.len()));
+            return Err(format!(
+                "row_width_mismatch: expected {}, got {}",
+                fields.len(),
+                vals.len()
+            ));
         }
 
         let mut cell_values: Map<String, Value> = Map::new();
         let mut attachment_fields: Vec<String> = Vec::new();
-        let mut missing_fields: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut missing_fields: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
 
         for (j, f) in fields.iter().enumerate() {
             let parsed = parse_scalar(&vals[j], true)?;
             match parsed {
-                ScalarValue::Missing => { missing_fields.insert(f.clone()); }
-                ScalarValue::Attachment => { attachment_fields.push(f.clone()); }
-                _ => { cell_values.insert(f.clone(), scalar_to_value(&parsed)?); }
+                ScalarValue::Missing => {
+                    missing_fields.insert(f.clone());
+                }
+                ScalarValue::Attachment => {
+                    attachment_fields.push(f.clone());
+                }
+                _ => {
+                    cell_values.insert(f.clone(), scalar_to_value(&parsed)?);
+                }
             }
         }
         i += 1;
@@ -322,9 +412,13 @@ fn parse_tabular_body(
             let att_indent = format!("{}  ", ind);
             while i < lines.len() {
                 let al = &lines[i];
-                if !al.starts_with(&att_indent) { break; }
+                if !al.starts_with(&att_indent) {
+                    break;
+                }
                 let ac = &al[att_indent.len()..];
-                if !ac.starts_with('.') { break; }
+                if !ac.starts_with('.') {
+                    break;
+                }
                 let (name, val, consumed) = parse_attachment(lines, i, &ac[1..], depth + 2)?;
                 if attachment_values.contains_key(&name) {
                     return Err(format!("duplicate_attachment: {}", name));
@@ -353,34 +447,55 @@ fn parse_tabular_body(
         // Build row in field order.
         let mut row = Map::new();
         for f in fields {
-            if missing_fields.contains(f) { continue; }
-            if let Some(v) = cell_values.remove(f) { row.insert(f.clone(), v); continue; }
-            if let Some(v) = attachment_values.remove(f) { row.insert(f.clone(), v); continue; }
+            if missing_fields.contains(f) {
+                continue;
+            }
+            if let Some(v) = cell_values.remove(f) {
+                row.insert(f.clone(), v);
+                continue;
+            }
+            if let Some(v) = attachment_values.remove(f) {
+                row.insert(f.clone(), v);
+                continue;
+            }
         }
         rows.push(Value::Object(row));
 
-        if expected_count >= 0 && rows.len() as i64 >= expected_count { break; }
+        if expected_count >= 0 && rows.len() as i64 >= expected_count {
+            break;
+        }
     }
     Ok((rows, i - start))
 }
 
 fn parse_attachment(
-    lines: &[String], line_idx: usize, rest: &str, depth: usize,
+    lines: &[String],
+    line_idx: usize,
+    rest: &str,
+    depth: usize,
 ) -> Result<(String, Value, usize), String> {
     let (name, after_name) = if rest.starts_with('"') {
         let mut close_idx = None;
         let bytes = rest.as_bytes();
         let mut j = 1;
         while j < bytes.len() {
-            if bytes[j] == b'\\' { j += 2; continue; }
-            if bytes[j] == b'"' { close_idx = Some(j); break; }
+            if bytes[j] == b'\\' {
+                j += 2;
+                continue;
+            }
+            if bytes[j] == b'"' {
+                close_idx = Some(j);
+                break;
+            }
             j += 1;
         }
         let ci = close_idx.ok_or("unterminated_quote")?;
         let name = parse_quoted_string(&rest[..ci + 1])?;
         (name, rest[ci + 1..].trim_start())
     } else {
-        let sp = rest.find(' ').ok_or_else(|| format!("invalid attachment: {}", rest))?;
+        let sp = rest
+            .find(' ')
+            .ok_or_else(|| format!("invalid attachment: {}", rest))?;
         (rest[..sp].to_string(), rest[sp..].trim_start())
     };
 
@@ -397,7 +512,9 @@ fn parse_attachment(
 }
 
 fn parse_expanded_body(
-    lines: &[String], start: usize, depth: usize,
+    lines: &[String],
+    start: usize,
+    depth: usize,
 ) -> Result<(Vec<Value>, usize), String> {
     let ind = "  ".repeat(depth);
     let mut items: Vec<Value> = Vec::new();
@@ -406,13 +523,19 @@ fn parse_expanded_body(
     while i < lines.len() {
         let line = &lines[i];
         let content = if depth > 0 {
-            if !line.starts_with(&ind) { break; }
+            if !line.starts_with(&ind) {
+                break;
+            }
             &line[ind.len()..]
         } else {
             line.as_str()
         };
-        if content.starts_with("## ") || content.starts_with("##!") { break; }
-        if !content.starts_with('@') { break; }
+        if content.starts_with("## ") || content.starts_with("##!") {
+            break;
+        }
+        if !content.starts_with('@') {
+            break;
+        }
 
         let sp = match content.find(' ') {
             Some(s) => s,
@@ -423,7 +546,11 @@ fn parse_expanded_body(
         let id_str = &content[1..sp];
         if let Ok(id) = id_str.parse::<usize>() {
             if id != items.len() {
-                return Err(format!("invalid_item_id: expected @{}, got @{}", items.len(), id_str));
+                return Err(format!(
+                    "invalid_item_id: expected @{}, got @{}",
+                    items.len(),
+                    id_str
+                ));
             }
         }
 
@@ -455,31 +582,42 @@ fn parse_expanded_body(
 }
 
 fn parse_count(s: &str) -> Result<usize, String> {
-    if s == "0" { return Ok(0); }
+    if s == "0" {
+        return Ok(0);
+    }
     if s.is_empty() || s.starts_with('0') {
         return Err(format!("invalid_count: {}", s));
     }
-    s.parse::<usize>().map_err(|_| format!("invalid_count: {}", s))
+    s.parse::<usize>()
+        .map_err(|_| format!("invalid_count: {}", s))
 }
 
 fn payload_to_value(p: &crate::types::Payload) -> Value {
-    let syms: Vec<Value> = p.symbols.iter().map(|s| {
-        serde_json::json!({
-            "qualifiedName": s.qualified_name,
-            "kind": s.kind,
-            "score": s.score,
-            "provenance": s.provenance,
-            "distance": s.distance,
+    let syms: Vec<Value> = p
+        .symbols
+        .iter()
+        .map(|s| {
+            serde_json::json!({
+                "qualifiedName": s.qualified_name,
+                "kind": s.kind,
+                "score": s.score,
+                "provenance": s.provenance,
+                "distance": s.distance,
+            })
         })
-    }).collect();
-    let edges: Vec<Value> = p.edges.iter().map(|e| {
-        serde_json::json!({
-            "source": e.source,
-            "target": e.target,
-            "edgeType": e.edge_type,
-            "status": e.status,
+        .collect();
+    let edges: Vec<Value> = p
+        .edges
+        .iter()
+        .map(|e| {
+            serde_json::json!({
+                "source": e.source,
+                "target": e.target,
+                "edgeType": e.edge_type,
+                "status": e.status,
+            })
         })
-    }).collect();
+        .collect();
     serde_json::json!({
         "tool": p.tool,
         "tokenBudget": p.token_budget,
@@ -491,18 +629,24 @@ fn payload_to_value(p: &crate::types::Payload) -> Value {
 }
 
 fn validate_summary_counts(
-    summary_line: &str, deferred_count: usize, content_lines: &[String],
+    summary_line: &str,
+    deferred_count: usize,
+    content_lines: &[String],
 ) -> Result<(), String> {
-    let counts_str = summary_line.split_whitespace()
+    let counts_str = summary_line
+        .split_whitespace()
         .find(|p| p.starts_with("counts="))
         .map(|p| &p[7..])
         .unwrap_or("");
-    if counts_str.is_empty() { return Ok(()); }
+    if counts_str.is_empty() {
+        return Ok(());
+    }
     let count_vals: Vec<&str> = counts_str.split(',').collect();
     if count_vals.len() != deferred_count {
         return Err(format!(
             "count_mismatch: summary has {} count entries but {} deferred sections",
-            count_vals.len(), deferred_count
+            count_vals.len(),
+            deferred_count
         ));
     }
     let mut actual_counts: Vec<usize> = Vec::new();
@@ -511,22 +655,31 @@ fn validate_summary_counts(
     for line in content_lines {
         let trimmed = line.trim_start();
         if trimmed.starts_with("## ") && trimmed.contains("[?]") {
-            if in_deferred { actual_counts.push(current_count); }
+            if in_deferred {
+                actual_counts.push(current_count);
+            }
             in_deferred = true;
             current_count = 0;
             continue;
         }
         if trimmed.starts_with("## ") {
-            if in_deferred { actual_counts.push(current_count); in_deferred = false; }
+            if in_deferred {
+                actual_counts.push(current_count);
+                in_deferred = false;
+            }
             continue;
         }
         if in_deferred && !trimmed.starts_with(' ') && !trimmed.starts_with('.') {
             current_count += 1;
         }
     }
-    if in_deferred { actual_counts.push(current_count); }
+    if in_deferred {
+        actual_counts.push(current_count);
+    }
     for (idx, cv) in count_vals.iter().enumerate() {
-        let declared: usize = cv.parse().map_err(|_| format!("count_mismatch: invalid count value '{}'", cv))?;
+        let declared: usize = cv
+            .parse()
+            .map_err(|_| format!("count_mismatch: invalid count value '{}'", cv))?;
         if idx < actual_counts.len() && declared != actual_counts[idx] {
             return Err(format!(
                 "count_mismatch: section {} declared {} in summary, actual {}",

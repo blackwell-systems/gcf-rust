@@ -1,7 +1,7 @@
 //! GCF v2.0 generic encoder: serializes serde_json::Value into GCF generic profile.
 
+use crate::scalar::{format_key, format_number, format_scalar};
 use serde_json::Value;
-use crate::scalar::{format_scalar, format_key, format_number};
 
 /// Encode any JSON value into GCF v2.0 generic profile.
 pub fn encode_generic(data: &Value) -> String {
@@ -82,7 +82,13 @@ fn encode_named_array(name: &str, arr: &[Value], out: &mut String, depth: usize)
     }
     if all_primitives(arr) {
         let vals: Vec<String> = arr.iter().map(|v| format_scalar(v, ',')).collect();
-        out.push_str(&format!("{}{}[{}]: {}\n", prefix, name, arr.len(), vals.join(",")));
+        out.push_str(&format!(
+            "{}{}[{}]: {}\n",
+            prefix,
+            name,
+            arr.len(),
+            vals.join(",")
+        ));
         return;
     }
     if let Some(fields) = tabular_fields(arr) {
@@ -93,7 +99,9 @@ fn encode_named_array(name: &str, arr: &[Value], out: &mut String, depth: usize)
 }
 
 fn tabular_fields(arr: &[Value]) -> Option<Vec<String>> {
-    if arr.is_empty() { return None; }
+    if arr.is_empty() {
+        return None;
+    }
     let mut field_order = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for item in arr {
@@ -104,14 +112,27 @@ fn tabular_fields(arr: &[Value]) -> Option<Vec<String>> {
             }
         }
     }
-    if field_order.is_empty() { return None; }
+    if field_order.is_empty() {
+        return None;
+    }
     Some(field_order)
 }
 
-fn encode_tabular(header_prefix: &str, arr: &[Value], fields: &[String], out: &mut String, depth: usize) {
+fn encode_tabular(
+    header_prefix: &str,
+    arr: &[Value],
+    fields: &[String],
+    out: &mut String,
+    depth: usize,
+) {
     let prefix = indent(depth);
     let fmt_fields: Vec<String> = fields.iter().map(|f| format_key(f)).collect();
-    out.push_str(&format!("{}[{}]{{{}}}\n", header_prefix, arr.len(), fmt_fields.join(",")));
+    out.push_str(&format!(
+        "{}[{}]{{{}}}\n",
+        header_prefix,
+        arr.len(),
+        fmt_fields.join(",")
+    ));
 
     for (i, item) in arr.iter().enumerate() {
         let map = match item.as_object() {
@@ -160,12 +181,24 @@ fn encode_tabular(header_prefix: &str, arr: &[Value], fields: &[String], out: &m
     }
 }
 
-fn encode_attachment_array(att_prefix: &str, fk: &str, arr: &[Value], out: &mut String, depth: usize) {
+fn encode_attachment_array(
+    att_prefix: &str,
+    fk: &str,
+    arr: &[Value],
+    out: &mut String,
+    depth: usize,
+) {
     if arr.is_empty() {
         out.push_str(&format!("{}.{} [0]\n", att_prefix, fk));
     } else if all_primitives(arr) {
         let vals: Vec<String> = arr.iter().map(|v| format_scalar(v, ',')).collect();
-        out.push_str(&format!("{}.{} [{}]: {}\n", att_prefix, fk, arr.len(), vals.join(",")));
+        out.push_str(&format!(
+            "{}.{} [{}]: {}\n",
+            att_prefix,
+            fk,
+            arr.len(),
+            vals.join(",")
+        ));
     } else if let Some(fields) = tabular_fields(arr) {
         encode_tabular(&format!("{}.{} ", att_prefix, fk), arr, &fields, out, depth);
     } else {
@@ -184,20 +217,43 @@ fn encode_expanded(header_prefix: &str, arr: &[Value], out: &mut String, depth: 
             }
             Value::Array(sub) => encode_expanded_array_item(&prefix, i, sub, out, depth),
             _ => {
-                out.push_str(&format!("{}@{} ={}\n", prefix, i, format_scalar(item, '\0')));
+                out.push_str(&format!(
+                    "{}@{} ={}\n",
+                    prefix,
+                    i,
+                    format_scalar(item, '\0')
+                ));
             }
         }
     }
 }
 
-fn encode_expanded_array_item(prefix: &str, idx: usize, arr: &[Value], out: &mut String, depth: usize) {
+fn encode_expanded_array_item(
+    prefix: &str,
+    idx: usize,
+    arr: &[Value],
+    out: &mut String,
+    depth: usize,
+) {
     if arr.is_empty() {
         out.push_str(&format!("{}@{} [0]\n", prefix, idx));
     } else if all_primitives(arr) {
         let vals: Vec<String> = arr.iter().map(|v| format_scalar(v, ',')).collect();
-        out.push_str(&format!("{}@{} [{}]: {}\n", prefix, idx, arr.len(), vals.join(",")));
+        out.push_str(&format!(
+            "{}@{} [{}]: {}\n",
+            prefix,
+            idx,
+            arr.len(),
+            vals.join(",")
+        ));
     } else if let Some(fields) = tabular_fields(arr) {
-        encode_tabular(&format!("{}@{} ", prefix, idx), arr, &fields, out, depth + 1);
+        encode_tabular(
+            &format!("{}@{} ", prefix, idx),
+            arr,
+            &fields,
+            out,
+            depth + 1,
+        );
     } else {
         encode_expanded(&format!("{}@{} ", prefix, idx), arr, out, depth + 1);
     }

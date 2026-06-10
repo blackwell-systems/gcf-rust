@@ -1,6 +1,6 @@
 //! Property-based round-trip tests for GCF v2.0.
 
-use gcf::{encode_generic, decode_generic};
+use gcf::{decode_generic, encode_generic};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
@@ -16,19 +16,27 @@ fn get_iterations() -> usize {
 // Simple xorshift32 PRNG.
 struct Rng(u32);
 impl Rng {
-    fn new(seed: u32) -> Self { Self(seed) }
+    fn new(seed: u32) -> Self {
+        Self(seed)
+    }
     fn next(&mut self) -> u32 {
         self.0 ^= self.0 << 13;
         self.0 ^= self.0 >> 17;
         self.0 ^= self.0 << 5;
         self.0
     }
-    fn int(&mut self, max: u32) -> u32 { self.next() % max }
-    fn float(&mut self) -> f64 { (self.next() as f64) / (u32::MAX as f64) }
+    fn int(&mut self, max: u32) -> u32 {
+        self.next() % max
+    }
+    fn float(&mut self) -> f64 {
+        (self.next() as f64) / (u32::MAX as f64)
+    }
 }
 
 fn gen_value(rng: &mut Rng, depth: usize, max_depth: usize) -> Value {
-    if depth >= max_depth { return gen_scalar(rng); }
+    if depth >= max_depth {
+        return gen_scalar(rng);
+    }
     match rng.int(10) {
         0 => Value::Null,
         1 => Value::Bool(rng.float() < 0.5),
@@ -80,7 +88,9 @@ fn gen_string(rng: &mut Rng) -> String {
 fn gen_bare_key(rng: &mut Rng) -> String {
     let chars = b"abcdefghijklmnopqrstuvwxyz_";
     let n = 1 + rng.int(8) as usize;
-    (0..n).map(|_| chars[rng.int(chars.len() as u32) as usize] as char).collect()
+    (0..n)
+        .map(|_| chars[rng.int(chars.len() as u32) as usize] as char)
+        .collect()
 }
 
 fn gen_object(rng: &mut Rng, depth: usize, max_depth: usize) -> Value {
@@ -99,17 +109,25 @@ fn gen_array(rng: &mut Rng, depth: usize, max_depth: usize) -> Value {
     let n = rng.int(6) as usize;
     let mut arr = Vec::with_capacity(n);
     match rng.int(4) {
-        0 => for _ in 0..n { arr.push(gen_scalar(rng)); },
+        0 => {
+            for _ in 0..n {
+                arr.push(gen_scalar(rng));
+            }
+        }
         1 => {
-            let fields: Vec<String> = (0..1 + rng.int(4) as usize).map(|_| gen_bare_key(rng)).collect();
+            let fields: Vec<String> = (0..1 + rng.int(4) as usize)
+                .map(|_| gen_bare_key(rng))
+                .collect();
             for _ in 0..n {
                 let mut obj = serde_json::Map::new();
                 for f in &fields {
-                    if rng.float() > 0.2 { obj.insert(f.clone(), gen_scalar(rng)); }
+                    if rng.float() > 0.2 {
+                        obj.insert(f.clone(), gen_scalar(rng));
+                    }
                 }
                 arr.push(Value::Object(obj));
             }
-        },
+        }
         2 => {
             for _ in 0..n {
                 let mut obj = serde_json::Map::new();
@@ -119,8 +137,12 @@ fn gen_array(rng: &mut Rng, depth: usize, max_depth: usize) -> Value {
                 }
                 arr.push(Value::Object(obj));
             }
-        },
-        _ => for _ in 0..n { arr.push(gen_value(rng, depth + 1, max_depth)); },
+        }
+        _ => {
+            for _ in 0..n {
+                arr.push(gen_value(rng, depth + 1, max_depth));
+            }
+        }
     }
     Value::Array(arr)
 }
@@ -137,7 +159,8 @@ fn structural_equal(a: &Value, b: &Value) -> bool {
         (Value::Object(am), Value::Object(bm)) => {
             let mut ak: Vec<&String> = am.keys().collect();
             let mut bk: Vec<&String> = bm.keys().collect();
-            ak.sort(); bk.sort();
+            ak.sort();
+            bk.sort();
             ak == bk && ak.iter().all(|k| structural_equal(&am[*k], &bm[*k]))
         }
         (Value::Array(aa), Value::Array(ba)) => {
@@ -156,12 +179,18 @@ fn test_random_roundtrip() {
         let val = gen_value(&mut rng, 0, 4);
         let gcf = encode_generic(&val);
         let decoded = decode_generic(&gcf).unwrap_or_else(|e| {
-            panic!("iteration {}: decode failed: {}\n  input: {}\n  gcf: {:?}", i, e, val, gcf);
+            panic!(
+                "iteration {}: decode failed: {}\n  input: {}\n  gcf: {:?}",
+                i, e, val, gcf
+            );
         });
         assert!(
             structural_equal(&val, &decoded),
             "iteration {}: round-trip mismatch\n  input:   {}\n  decoded: {}\n  gcf: {:?}",
-            i, val, decoded, gcf
+            i,
+            val,
+            decoded,
+            gcf
         );
     }
 }
@@ -169,29 +198,72 @@ fn test_random_roundtrip() {
 #[test]
 fn test_adversarial_roundtrip() {
     let collision_strings = vec![
-        "true", "false", "-", "~", "^", "0", "1", "42", "-1", "3.14", "1e10", "-0",
-        "", " ", "  ", " x", "x ", "#", "# comment", "@0", "@handle",
-        "+1", ".5", "+.3", "01", "00", "null", "NULL",
-        "|", ",", "=", "\"", "\\", "\n", "\r", "\t",
-        "a|b", "a,b", "a=b", "hello world",
+        "true",
+        "false",
+        "-",
+        "~",
+        "^",
+        "0",
+        "1",
+        "42",
+        "-1",
+        "3.14",
+        "1e10",
+        "-0",
+        "",
+        " ",
+        "  ",
+        " x",
+        "x ",
+        "#",
+        "# comment",
+        "@0",
+        "@handle",
+        "+1",
+        ".5",
+        "+.3",
+        "01",
+        "00",
+        "null",
+        "NULL",
+        "|",
+        ",",
+        "=",
+        "\"",
+        "\\",
+        "\n",
+        "\r",
+        "\t",
+        "a|b",
+        "a,b",
+        "a=b",
+        "hello world",
     ];
 
     let iterations = get_iterations();
     let mut rng = Rng::new(99);
     for i in 0..iterations {
         let val = if rng.float() < 0.3 {
-            Value::String(collision_strings[rng.int(collision_strings.len() as u32) as usize].to_string())
+            Value::String(
+                collision_strings[rng.int(collision_strings.len() as u32) as usize].to_string(),
+            )
         } else {
             gen_value(&mut rng, 0, 3)
         };
         let gcf = encode_generic(&val);
         let decoded = decode_generic(&gcf).unwrap_or_else(|e| {
-            panic!("iteration {}: decode failed: {}\n  input: {}\n  gcf: {:?}", i, e, val, gcf);
+            panic!(
+                "iteration {}: decode failed: {}\n  input: {}\n  gcf: {:?}",
+                i, e, val, gcf
+            );
         });
         assert!(
             structural_equal(&val, &decoded),
             "iteration {}: round-trip mismatch\n  input:   {}\n  decoded: {}\n  gcf: {:?}",
-            i, val, decoded, gcf
+            i,
+            val,
+            decoded,
+            gcf
         );
     }
 }

@@ -191,16 +191,8 @@ impl<W: Write> GenericStreamEncoder<W> {
         if inner.sections.is_empty() {
             return Ok(());
         }
-        let counts: Vec<String> = inner
-            .sections
-            .iter()
-            .map(|s| s.count.to_string())
-            .collect();
-        writeln!(
-            inner.w,
-            "##! summary counts={}",
-            counts.join(",")
-        )?;
+        let counts: Vec<String> = inner.sections.iter().map(|s| s.count.to_string()).collect();
+        writeln!(inner.w, "##! summary counts={}", counts.join(","))?;
         Ok(())
     }
 
