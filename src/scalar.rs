@@ -93,7 +93,7 @@ pub fn format_number(n: &serde_json::Number) -> String {
             return "0".to_string();
         }
         let abs = f.abs();
-        if abs >= 1e-6 && abs < 1e21 {
+        if (1e-6..1e21).contains(&abs) {
             let s = format!("{}", f);
             // Strip trailing .0 for integer-valued floats.
             if s.ends_with(".0") && f == f.trunc() {
@@ -107,10 +107,12 @@ pub fn format_number(n: &serde_json::Number) -> String {
         if let Some(pos) = s.find('e') {
             let mantissa = s[..pos].trim_end_matches('0').trim_end_matches('.');
             let exp_part = &s[pos + 1..];
-            let (sign, digits) = if exp_part.starts_with('-') {
-                ("-", exp_part[1..].trim_start_matches('0'))
+            let (sign, digits) = if let Some(rest) = exp_part.strip_prefix('-') {
+                ("-", rest.trim_start_matches('0'))
+            } else if let Some(rest) = exp_part.strip_prefix('+') {
+                ("+", rest.trim_start_matches('0'))
             } else {
-                ("+", exp_part.trim_start_matches('+').trim_start_matches('0'))
+                ("+", exp_part.trim_start_matches('0'))
             };
             let digits = if digits.is_empty() { "0" } else { digits };
             return format!("{}e{}{}", mantissa, sign, digits);
@@ -144,11 +146,10 @@ pub fn parse_scalar(s: &str, tabular_context: bool) -> Result<ScalarValue, Strin
     if s == "false" { return Ok(ScalarValue::Bool(false)); }
     if JSON_NUMBER_RE.is_match(s) {
         if let Ok(f) = s.parse::<f64>() {
-            if !s.contains('.') && !s.contains('e') && !s.contains('E') {
-                if f.abs() <= (1i64 << 53) as f64 {
+            if !s.contains('.') && !s.contains('e') && !s.contains('E')
+                && f.abs() <= (1i64 << 53) as f64 {
                     return Ok(ScalarValue::Int(f as i64));
                 }
-            }
             return Ok(ScalarValue::Float(f));
         }
     }

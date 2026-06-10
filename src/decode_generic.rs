@@ -9,7 +9,7 @@ use serde_json::{Map, Number, Value};
 
 /// Decode GCF v2.0 text into a generic `serde_json::Value`.
 pub fn decode_generic(input: &str) -> Result<Value, String> {
-    let input = input.trim_end_matches(|c| c == '\n' || c == '\r');
+    let input = input.trim_end_matches(['\n', '\r']);
     if input.is_empty() {
         return Err("missing_header: empty input".into());
     }
@@ -40,7 +40,7 @@ pub fn decode_generic(input: &str) -> Result<Value, String> {
         let line = line.trim_end_matches('\r');
         if line.is_empty() { continue; }
         // Tab check.
-        for (_j, c) in line.chars().enumerate() {
+        for c in line.chars() {
             if c == '\t' { return Err("tab_indentation: tabs in leading whitespace".into()); }
             if c != ' ' { break; }
         }
@@ -66,7 +66,7 @@ pub fn decode_generic(input: &str) -> Result<Value, String> {
         if content_lines.len() > 1 {
             return Err("trailing_characters: extra lines after root scalar".into());
         }
-        return scalar_to_value(&parse_scalar(&first[1..], false)?);
+        return scalar_to_value(&parse_scalar(first.strip_prefix("=").unwrap(), false)?);
     }
 
     // Root array.
@@ -126,8 +126,7 @@ fn parse_object_body(
         }
 
         // Array section.
-        if content.starts_with("## ") {
-            let hdr = &content[3..];
+        if let Some(hdr) = content.strip_prefix("## ") {
             if let Some(bi) = hdr.find(" [") {
                 let name = parse_key_from_header(&hdr[..bi])?;
                 check_dup(out, &name)?;
@@ -229,7 +228,7 @@ fn parse_array_from_header(
 
     // Inline.
     if after.starts_with(": ") || after == ":" {
-        let vals_str = if after.starts_with(": ") { &after[2..] } else { "" };
+        let vals_str = if after.starts_with(": ") { after.strip_prefix(": ").unwrap() } else { "" };
         if vals_str.is_empty() {
             if count >= 0 && count != 0 {
                 return Err(format!("count_mismatch: declared {}, got 0", count));
@@ -431,7 +430,7 @@ fn parse_expanded_body(
         let marker = &content[sp + 1..];
 
         if marker.starts_with('=') {
-            let val = scalar_to_value(&parse_scalar(&marker[1..], false)?)?;
+            let val = scalar_to_value(&parse_scalar(marker.strip_prefix("=").unwrap(), false)?)?;
             items.push(val);
             i += 1;
             continue;

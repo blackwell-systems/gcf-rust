@@ -2,6 +2,7 @@ use std::io::Write;
 use std::sync::Mutex;
 
 struct SectionCount {
+    #[allow(dead_code)]
     name: String,
     count: usize,
 }
