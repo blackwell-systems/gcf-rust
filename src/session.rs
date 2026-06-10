@@ -119,7 +119,7 @@ pub fn encode_with_session(p: &Payload, sess: &Session) -> String {
     // Header with session=true marker.
     write!(
         b,
-        "GCF tool={} budget={} tokens={} symbols={} edges={} session=true",
+        "GCF profile=graph tool={} budget={} tokens={} symbols={} edges={} session=true",
         p.tool,
         p.token_budget,
         p.tokens_used,

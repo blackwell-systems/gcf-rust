@@ -36,7 +36,7 @@ struct StreamEncoderInner<W: Write> {
 impl<W: Write> StreamEncoder<W> {
     /// Create a new streaming encoder writing to `w`. The header is emitted immediately.
     pub fn new(mut w: W, tool: &str, opts: StreamOptions) -> Self {
-        let mut header = format!("GCF tool={}", tool);
+        let mut header = format!("GCF profile=graph tool={}", tool);
         if opts.token_budget > 0 {
             write!(header, " budget={}", opts.token_budget).unwrap();
         }
@@ -159,27 +159,26 @@ impl<W: Write> StreamEncoder<W> {
         }
     }
 
-    /// Emit ## _summary trailer with final counts.
+    /// Emit ##! summary trailer with final counts.
     pub fn close(&self) {
         let mut inner = self.inner.lock().unwrap();
-        let mut sections: Vec<String> = Vec::new();
+        let mut counts: Vec<String> = Vec::new();
 
-        for (g, c) in &inner.group_counts {
+        for (_g, c) in &inner.group_counts {
             if *c > 0 {
-                sections.push(format!("{}:{}", g, c));
+                counts.push(c.to_string());
             }
         }
         if inner.edge_count > 0 {
-            sections.push(format!("edges:{}", inner.edge_count));
+            counts.push(inner.edge_count.to_string());
         }
 
         let symbol_count = inner.next_id;
         let edge_count = inner.edge_count;
-        let sections_str = sections.join(",");
         writeln!(
             inner.w,
-            "## _summary symbols={} edges={} sections={}",
-            symbol_count, edge_count, sections_str
+            "##! summary symbols={} edges={} counts={}",
+            symbol_count, edge_count, counts.join(",")
         )
         .unwrap();
     }

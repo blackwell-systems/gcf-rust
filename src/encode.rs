@@ -47,7 +47,7 @@ pub fn encode(p: &Payload) -> String {
     // Header line.
     write!(
         b,
-        "GCF tool={} budget={} tokens={} symbols={} edges={}",
+        "GCF profile=graph tool={} budget={} tokens={} symbols={} edges={}",
         p.tool,
         p.token_budget,
         p.tokens_used,
@@ -148,7 +148,7 @@ mod tests {
 
         let output = encode(&p);
         let expected = "\
-GCF tool=context_for_task budget=5000 tokens=1847 symbols=2 edges=1
+GCF profile=graph tool=context_for_task budget=5000 tokens=1847 symbols=2 edges=1
 ## targets
 @0 fn pkg.AuthMiddleware 0.78 lsp_resolved
 ## related

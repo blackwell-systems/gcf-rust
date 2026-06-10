@@ -41,6 +41,7 @@ pub mod decode_generic;
 pub mod delta;
 pub mod encode;
 pub mod generic;
+pub mod scalar;
 pub mod session;
 pub mod stream;
 pub mod stream_generic;

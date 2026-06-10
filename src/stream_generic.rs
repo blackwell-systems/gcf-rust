@@ -181,7 +181,7 @@ impl<W: Write> GenericStreamEncoder<W> {
         writeln!(inner.w, "{}[{}]: {}", name, values.len(), parts.join(",")).unwrap();
     }
 
-    /// Emit the ## _summary trailer with final counts.
+    /// Emit the ##! summary trailer with final counts.
     pub fn close(&self) -> std::io::Result<()> {
         let mut inner = self.inner.lock().unwrap();
         if inner.current.is_some() {
@@ -190,20 +190,15 @@ impl<W: Write> GenericStreamEncoder<W> {
         if inner.sections.is_empty() {
             return Ok(());
         }
-        let mut total_rows = 0usize;
-        let section_parts: Vec<String> = inner
+        let counts: Vec<String> = inner
             .sections
             .iter()
-            .map(|s| {
-                total_rows += s.count;
-                format!("{}:{}", s.name, s.count)
-            })
+            .map(|s| s.count.to_string())
             .collect();
         writeln!(
             inner.w,
-            "## _summary rows={} sections={}",
-            total_rows,
-            section_parts.join(",")
+            "##! summary counts={}",
+            counts.join(",")
         )?;
         Ok(())
     }
@@ -237,7 +232,7 @@ mod tests {
         let out = String::from_utf8(inner.w.clone()).unwrap();
         assert!(out.contains("## employees [?]{id,name,department,salary}"));
         assert!(out.contains("1|Alice|Engineering|95000"));
-        assert!(out.contains("## _summary rows=3 sections=employees:3"));
+        assert!(out.contains("##! summary counts=3"));
     }
 
     #[test]
@@ -273,7 +268,7 @@ mod tests {
 
         let inner = enc.inner.lock().unwrap();
         let out = String::from_utf8(inner.w.clone()).unwrap();
-        assert!(out.contains("sections=users:2,roles:1"));
+        assert!(out.contains("counts=2,1"));
     }
 
     #[test]

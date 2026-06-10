@@ -14,7 +14,7 @@ pub fn encode_delta(d: &DeltaPayload) -> String {
     };
     writeln!(
         b,
-        "GCF tool={} delta=true base_root={} new_root={} tokens={} savings={:.0}%",
+        "GCF profile=graph tool={} delta=true base_root={} new_root={} tokens={} savings={:.0}%",
         d.tool, d.base_root, d.new_root, d.delta_tokens, savings
     )
     .unwrap();

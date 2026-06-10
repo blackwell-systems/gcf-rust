@@ -22,11 +22,11 @@ impl fmt::Display for DecodeError {
             DecodeError::InvalidHeader(h) => {
                 write!(f, "gcf: invalid header, expected 'GCF ...' got {:?}", h)
             }
-            DecodeError::MissingTool => write!(f, "gcf: header missing required 'tool' field"),
+            DecodeError::MissingTool => write!(f, "missing_tool: header missing required 'tool' field"),
             DecodeError::InvalidField(msg) => write!(f, "gcf: {}", msg),
-            DecodeError::InvalidSymbolLine(msg) => write!(f, "gcf: {}", msg),
-            DecodeError::InvalidEdgeLine(msg) => write!(f, "gcf: {}", msg),
-            DecodeError::UnknownEdgeId(msg) => write!(f, "gcf: {}", msg),
+            DecodeError::InvalidSymbolLine(msg) => write!(f, "invalid_node_line: {}", msg),
+            DecodeError::InvalidEdgeLine(msg) => write!(f, "invalid_edge_syntax: {}", msg),
+            DecodeError::UnknownEdgeId(msg) => write!(f, "unknown_edge_reference: {}", msg),
         }
     }
 }
@@ -64,12 +64,18 @@ pub fn decode(input: &str) -> Result<Payload, DecodeError> {
     let mut sym_by_id: HashMap<usize, usize> = HashMap::new(); // id -> index in symbols vec
     let mut current_distance: i32 = 0;
     let mut in_edges = false;
+    let is_delta = header.contains("delta=true");
+    let valid_delta_sections: std::collections::HashSet<&str> =
+        ["removed", "added", "edges_removed", "edges_added"].iter().copied().collect();
 
     for &line in &lines[1..] {
         let line = line.trim_end_matches('\r');
         if line.is_empty() {
             continue;
         }
+
+        // Skip ##! summary trailer.
+        if line.starts_with("##! ") { continue; }
 
         // Group header.
         if let Some(raw_group) = line.strip_prefix("## ") {
@@ -78,6 +84,9 @@ pub fn decode(input: &str) -> Result<Payload, DecodeError> {
                 Some(idx) => &raw_group[..idx],
                 None => raw_group,
             };
+            if is_delta && !valid_delta_sections.contains(group) {
+                return Err(DecodeError::InvalidField(format!("malformed_delta: invalid delta section {:?}", group)));
+            }
             if group == "edges" {
                 in_edges = true;
             } else {
@@ -168,13 +177,13 @@ fn parse_symbol_line(line: &str, distance: i32) -> Result<(Symbol, usize), Decod
     let id_str = &parts[0][1..]; // strip @
     let id: usize = id_str
         .parse()
-        .map_err(|_| DecodeError::InvalidSymbolLine(format!("invalid symbol id {:?}", id_str)))?;
+        .map_err(|_| DecodeError::InvalidSymbolLine(format!("invalid_symbol_id: {:?}", id_str)))?;
 
     let kind = kind_expand(parts[1]);
     let qname = parts[2].to_string();
     let score: f64 = parts[3]
         .parse()
-        .map_err(|_| DecodeError::InvalidSymbolLine(format!("invalid score {:?}", parts[3])))?;
+        .map_err(|_| DecodeError::InvalidSymbolLine(format!("invalid_score: {:?}", parts[3])))?;
     let provenance = parts[4].to_string();
 
     Ok((
