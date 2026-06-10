@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.0.1 (2026-06-10)
+
+- CLI: `encode`, `decode`, `encode-generic`, `decode-generic` subcommands
+- Both graph and generic profiles supported from the command line
+
 ## v1.0.0 (2026-06-10)
 
 SPEC v2.0 implementation. 125/133 conformance fixtures passing (8 skipped: session, delta, binary UTF-8, negative zero, graph encode). 40M property-based round-trips with zero failures.
