@@ -1,3 +1,4 @@
+#![allow(clippy::collapsible_if, clippy::collapsible_else_if, clippy::manual_strip, clippy::type_complexity)]
 //! GCF generic decoder: parses GCF generic or graph profile text into serde_json::Value.
 
 use crate::decode::decode;

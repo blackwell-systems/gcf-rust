@@ -51,7 +51,7 @@ pub fn needs_quote(s: &str) -> bool {
             || code < 0x20
             || c == '\n'
             || c == '\r'
-            || (code >= 0x80 && code <= 0x9F) // C1 controls
+            || ((0x80..=0x9F).contains(&code)) // C1 controls
             || (code > 0x7F && matches!(code, 0xA0 | 0x1680 | 0x2028 | 0x2029 | 0x202F | 0x205F | 0x3000 | 0xFEFF))
             || (0x2000..=0x200A).contains(&code) // Unicode spaces
         {
