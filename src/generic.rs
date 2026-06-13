@@ -119,11 +119,15 @@ fn tabular_fields(arr: &[Value]) -> Option<Vec<String>> {
 }
 
 fn inline_schema_fields(arr: &[Value], field_name: &str) -> Option<Vec<String>> {
-    if arr.is_empty() { return None; }
+    if arr.is_empty() {
+        return None;
+    }
     let first = arr[0].as_object()?;
     let first_val = first.get(field_name)?;
     let first_obj = first_val.as_object()?;
-    if first_obj.is_empty() { return None; }
+    if first_obj.is_empty() {
+        return None;
+    }
 
     let mut canonical_keys: Option<Vec<String>> = None;
     for item in arr {
@@ -134,21 +138,31 @@ fn inline_schema_fields(arr: &[Value], field_name: &str) -> Option<Vec<String>> 
         };
         let obj = v.as_object()?;
         for val in obj.values() {
-            if val.is_object() || val.is_array() { return None; }
+            if val.is_object() || val.is_array() {
+                return None;
+            }
         }
         let keys: Vec<String> = obj.keys().cloned().collect();
         match &canonical_keys {
             None => canonical_keys = Some(keys),
-            Some(ck) => { if keys != *ck { return None; } }
+            Some(ck) => {
+                if keys != *ck {
+                    return None;
+                }
+            }
         }
     }
     let ck = canonical_keys?;
-    if ck.len() < 3 { return None; }
+    if ck.len() < 3 {
+        return None;
+    }
     Some(ck)
 }
 
 fn shared_array_schema(arr: &[Value], field_name: &str) -> Option<Vec<String>> {
-    if arr.is_empty() { return None; }
+    if arr.is_empty() {
+        return None;
+    }
     let first = arr[0].as_object()?;
     let first_val = first.get(field_name)?;
     first_val.as_array()?;
@@ -166,12 +180,18 @@ fn shared_array_schema(arr: &[Value], field_name: &str) -> Option<Vec<String>> {
         for sub_item in sub_arr {
             let sub_map = sub_item.as_object()?;
             for val in sub_map.values() {
-                if val.is_object() || val.is_array() { return None; }
+                if val.is_object() || val.is_array() {
+                    return None;
+                }
             }
         }
         match &canonical_fields {
             None => canonical_fields = Some(fields),
-            Some(cf) => { if fields != *cf { return None; } }
+            Some(cf) => {
+                if fields != *cf {
+                    return None;
+                }
+            }
         }
     }
     canonical_fields
@@ -187,8 +207,10 @@ fn encode_tabular(
     let prefix = indent(depth);
 
     // Pre-compute inline schemas and shared array schemas.
-    let mut inline_schemas: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
-    let mut shared_arr_schemas: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    let mut inline_schemas: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    let mut shared_arr_schemas: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
     for f in fields {
         if let Some(ifs) = inline_schema_fields(arr, f) {
             inline_schemas.insert(f.clone(), ifs);
@@ -213,7 +235,12 @@ fn encode_tabular(
         };
 
         let mut cells = Vec::new();
-        struct Att { name: String, value: Value, inline: bool, inline_fields: Option<Vec<String>> }
+        struct Att {
+            name: String,
+            value: Value,
+            inline: bool,
+            inline_fields: Option<Vec<String>>,
+        }
         let mut attachments: Vec<Att> = Vec::new();
         let mut row_has_attachment = false;
 
@@ -225,19 +252,35 @@ fn encode_tabular(
                     if let Some(ifs) = inline_schemas.get(f) {
                         if v.is_object() {
                             if i == 0 {
-                                let fmt_if: Vec<String> = ifs.iter().map(|k| format_key(k)).collect();
+                                let fmt_if: Vec<String> =
+                                    ifs.iter().map(|k| format_key(k)).collect();
                                 cells.push(format!("^{{{}}}", fmt_if.join(",")));
                             } else {
                                 cells.push("^".to_string());
                             }
-                            attachments.push(Att { name: f.clone(), value: v.clone(), inline: true, inline_fields: Some(ifs.clone()) });
+                            attachments.push(Att {
+                                name: f.clone(),
+                                value: v.clone(),
+                                inline: true,
+                                inline_fields: Some(ifs.clone()),
+                            });
                         } else {
                             cells.push("^".to_string());
-                            attachments.push(Att { name: f.clone(), value: v.clone(), inline: false, inline_fields: None });
+                            attachments.push(Att {
+                                name: f.clone(),
+                                value: v.clone(),
+                                inline: false,
+                                inline_fields: None,
+                            });
                         }
                     } else {
                         cells.push("^".to_string());
-                        attachments.push(Att { name: f.clone(), value: v.clone(), inline: false, inline_fields: None });
+                        attachments.push(Att {
+                            name: f.clone(),
+                            value: v.clone(),
+                            inline: false,
+                            inline_fields: None,
+                        });
                     }
                     row_has_attachment = true;
                 }
@@ -258,12 +301,13 @@ fn encode_tabular(
             let fk = format_key(&att.name);
             if att.inline {
                 if let (Some(ifs), Some(obj)) = (&att.inline_fields, att.value.as_object()) {
-                    let vals: Vec<String> = ifs.iter().map(|inf| {
-                        match obj.get(inf) {
+                    let vals: Vec<String> = ifs
+                        .iter()
+                        .map(|inf| match obj.get(inf) {
                             None => "~".to_string(),
                             Some(v) => format_scalar(v, '|'),
-                        }
-                    }).collect();
+                        })
+                        .collect();
                     out.push_str(&format!("{}{}\n", prefix, vals.join("|")));
                 }
             } else {
@@ -275,7 +319,14 @@ fn encode_tabular(
                     Value::Array(sub) => {
                         if let Some(sas) = shared_arr_schemas.get(&att.name) {
                             if i > 0 {
-                                encode_attachment_array_shared(&prefix, &fk, sub, out, depth + 2, sas);
+                                encode_attachment_array_shared(
+                                    &prefix,
+                                    &fk,
+                                    sub,
+                                    out,
+                                    depth + 2,
+                                    sas,
+                                );
                             } else {
                                 encode_attachment_array(&prefix, &fk, sub, out, depth + 2);
                             }
@@ -304,7 +355,13 @@ fn encode_attachment_array_shared(
     }
     if all_primitives(arr) {
         let vals: Vec<String> = arr.iter().map(|v| format_scalar(v, ',')).collect();
-        out.push_str(&format!("{}.{} [{}]: {}\n", att_prefix, fk, arr.len(), vals.join(",")));
+        out.push_str(&format!(
+            "{}.{} [{}]: {}\n",
+            att_prefix,
+            fk,
+            arr.len(),
+            vals.join(",")
+        ));
         return;
     }
     if let Some(fields) = tabular_fields(arr) {
@@ -313,13 +370,14 @@ fn encode_attachment_array_shared(
             out.push_str(&format!("{}.{} [{}]\n", att_prefix, fk, arr.len()));
             for item in arr {
                 if let Some(obj) = item.as_object() {
-                    let cells: Vec<String> = shared_fields.iter().map(|f| {
-                        match obj.get(f) {
+                    let cells: Vec<String> = shared_fields
+                        .iter()
+                        .map(|f| match obj.get(f) {
                             None => "~".to_string(),
                             Some(Value::Null) => "-".to_string(),
                             Some(v) => format_scalar(v, '|'),
-                        }
-                    }).collect();
+                        })
+                        .collect();
                     out.push_str(&format!("{}{}\n", p, cells.join("|")));
                 }
             }

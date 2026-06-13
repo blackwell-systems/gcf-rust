@@ -1,4 +1,9 @@
-#![allow(clippy::collapsible_if, clippy::collapsible_else_if, clippy::manual_strip, clippy::type_complexity)]
+#![allow(
+    clippy::collapsible_if,
+    clippy::collapsible_else_if,
+    clippy::manual_strip,
+    clippy::type_complexity
+)]
 //! GCF generic decoder: parses GCF generic or graph profile text into serde_json::Value.
 
 use crate::decode::decode;
@@ -778,7 +783,6 @@ fn parse_attachment_v3(
 
     Err(format!("invalid attachment form: {}", after_name))
 }
-
 
 fn parse_expanded_body(
     lines: &[String],
