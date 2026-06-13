@@ -6,7 +6,7 @@ use std::sync::LazyLock;
 static JSON_NUMBER_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$").unwrap());
 
-static NUMERIC_LIKE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[+-]?\.?\d").unwrap());
+static NUMERIC_LIKE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[+-]\.?\d|^\.\d|^0\d").unwrap());
 
 static BARE_KEY_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*$").unwrap());
@@ -48,7 +48,6 @@ pub fn needs_quote(s: &str) -> bool {
         if c == '"'
             || c == '\\'
             || c == '|'
-            || c == ','
             || code < 0x20
             || c == '\n'
             || c == '\r'

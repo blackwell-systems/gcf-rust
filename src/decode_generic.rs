@@ -342,9 +342,33 @@ fn parse_tabular_body(
     fields: &[String],
     expected_count: i64,
 ) -> Result<(Vec<Value>, usize), String> {
+    parse_tabular_body_with_shared(lines, start, depth, fields, expected_count, None)
+}
+
+/// v3 tabular body parser with inline schemas, no-indent attachments, and shared array schemas.
+fn parse_tabular_body_with_shared(
+    lines: &[String],
+    start: usize,
+    depth: usize,
+    fields: &[String],
+    expected_count: i64,
+    parent_shared_schemas: Option<&std::collections::HashMap<String, Vec<String>>>,
+) -> Result<(Vec<Value>, usize), String> {
     let ind = "  ".repeat(depth);
     let mut rows: Vec<Value> = Vec::new();
     let mut i = start;
+
+    // Track inline schemas declared by ^{fields}.
+    let mut inline_schemas: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    // Track shared array schemas: field -> fields list (from first row's attachment).
+    let mut shared_array_schemas: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    if let Some(parent) = parent_shared_schemas {
+        for (k, v) in parent {
+            shared_array_schemas.insert(k.clone(), v.clone());
+        }
+    }
 
     while i < lines.len() {
         let line = &lines[i];
@@ -359,106 +383,260 @@ fn parse_tabular_body(
         if content.starts_with("## ") || content.starts_with("##!") {
             break;
         }
-        if !content.is_empty() && content.starts_with(' ') {
+        if !content.is_empty() && content.as_bytes()[0] == b' ' {
             let trimmed = content.trim_start();
             if trimmed.starts_with('.') {
-                return Err(format!("orphan_attachment: {}", trimmed));
+                break; // attachment lines handled below
             }
             break;
         }
 
+        // Strip @N prefix (must be @digits).
         let mut row_data = content;
         let mut row_has_id = false;
         if row_data.starts_with('@') {
             if let Some(sp) = row_data.find(' ') {
-                row_data = &row_data[sp + 1..];
-                row_has_id = true;
+                let id_str = &row_data[1..sp];
+                let valid_id = !id_str.is_empty() && id_str.bytes().all(|b| b.is_ascii_digit());
+                if valid_id {
+                    row_data = &row_data[sp + 1..];
+                    row_has_id = true;
+                }
             }
         }
 
         let vals = split_respecting_quotes(row_data, '|');
         if vals.len() != fields.len() {
             return Err(format!(
-                "row_width_mismatch: expected {}, got {}",
+                "row_width_mismatch: expected {} fields, got {}",
                 fields.len(),
                 vals.len()
             ));
         }
 
-        let mut cell_values: Map<String, Value> = Map::new();
-        let mut attachment_fields: Vec<String> = Vec::new();
-        let mut missing_fields: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+        let mut row: Map<String, Value> = Map::new();
+        let mut traditional_att_fields: Vec<String> = Vec::new();
+        let mut inline_att_fields: Vec<String> = Vec::new();
+        let mut inline_att_order: Vec<String> = Vec::new();
 
         for (j, f) in fields.iter().enumerate() {
-            let parsed = parse_scalar(&vals[j], true)?;
+            let cell_val = &vals[j];
+
+            // Check for ^{fields} inline schema declaration.
+            if cell_val.starts_with("^{") && cell_val.ends_with('}') {
+                let schema_str = &cell_val[1..]; // "{field1,field2,...}"
+                let ifs = split_field_decl(schema_str)?;
+                inline_schemas.insert(f.clone(), ifs);
+                inline_att_fields.push(f.clone());
+                inline_att_order.push(f.clone());
+                continue;
+            }
+
+            let parsed = parse_scalar(cell_val, true)?;
             match parsed {
                 ScalarValue::Missing => {
-                    missing_fields.insert(f.clone());
+                    // absent: skip
                 }
                 ScalarValue::Attachment => {
-                    attachment_fields.push(f.clone());
+                    // Check if this field has a stored inline schema.
+                    if inline_schemas.contains_key(f) {
+                        inline_att_fields.push(f.clone());
+                        inline_att_order.push(f.clone());
+                    } else {
+                        traditional_att_fields.push(f.clone());
+                    }
                 }
                 _ => {
-                    cell_values.insert(f.clone(), scalar_to_value(&parsed)?);
+                    row.insert(f.clone(), scalar_to_value(&parsed)?);
                 }
             }
         }
+
         i += 1;
 
-        // Parse attachments.
-        let mut attachment_values: Map<String, Value> = Map::new();
-        if row_has_id && !attachment_fields.is_empty() {
-            let att_indent = format!("{}  ", ind);
-            while i < lines.len() {
-                let al = &lines[i];
-                if !al.starts_with(&att_indent) {
-                    break;
-                }
-                let ac = &al[att_indent.len()..];
-                if !ac.starts_with('.') {
-                    break;
-                }
-                let (name, val, consumed) = parse_attachment(lines, i, &ac[1..], depth + 2)?;
-                if attachment_values.contains_key(&name) {
-                    return Err(format!("duplicate_attachment: {}", name));
-                }
-                attachment_values.insert(name, val);
-                i += consumed;
+        // Build ordered list of expected attachment fields from cell order (preserving field order).
+        let mut all_att_fields: Vec<String> = Vec::new();
+        for f in fields {
+            let is_trad = traditional_att_fields.iter().any(|tf| tf == f);
+            let is_inline = inline_att_fields.iter().any(|inf| inf == f);
+            if is_trad || is_inline {
+                all_att_fields.push(f.clone());
             }
-            for f in &attachment_fields {
-                if !attachment_values.contains_key(f) {
+        }
+
+        // Check for orphan attachments when row has ID but no ^ cells.
+        if row_has_id && all_att_fields.is_empty() {
+            if i < lines.len() {
+                let peek_line = &lines[i];
+                let peek_content = if peek_line.starts_with(&format!("{}  ", ind)) {
+                    &peek_line[ind.len() + 2..]
+                } else if peek_line.starts_with(&ind) {
+                    &peek_line[ind.len()..]
+                } else {
+                    ""
+                };
+                if peek_content.starts_with('.') {
+                    let (orphan_name, _) = parse_attachment_name(&peek_content[1..]);
+                    return Err(format!(
+                        "orphan_attachment: .{} without matching ^ cell",
+                        orphan_name
+                    ));
+                }
+            }
+        }
+
+        if row_has_id && !all_att_fields.is_empty() {
+            let mut resolved_attachments: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            let mut inline_idx: usize = 0;
+
+            while i < lines.len() && resolved_attachments.len() < all_att_fields.len() {
+                let a_line = &lines[i];
+                let a_content = if a_line.starts_with(&format!("{}  ", ind)) {
+                    &a_line[ind.len() + 2..]
+                } else if a_line.starts_with(&ind) {
+                    &a_line[ind.len()..]
+                } else {
+                    break;
+                };
+
+                // Line starts with ".": traditional or prefixed inline attachment.
+                if a_content.starts_with('.') {
+                    let rest = &a_content[1..];
+                    let (att_name, after_name_raw) = parse_attachment_name(rest);
+                    let after_name = after_name_raw.trim_start();
+
+                    // Check orphan: attachment for field not in all_att_fields.
+                    let is_expected = all_att_fields.iter().any(|af| af == &att_name);
+                    if !is_expected {
+                        return Err(format!(
+                            "orphan_attachment: {} without matching ^ cell",
+                            att_name
+                        ));
+                    }
+                    // Check duplicate.
+                    if resolved_attachments.contains(&att_name) {
+                        return Err(format!("duplicate_attachment: {}", att_name));
+                    }
+
+                    // Check if this field has inline schema and data is pipe-delimited (not {} or [).
+                    if let Some(ifs) = inline_schemas.get(&att_name) {
+                        if !after_name.starts_with("{}") && !after_name.starts_with('[') {
+                            // Prefixed inline data: .fieldname val1|val2|...
+                            let inline_vals = split_respecting_quotes(after_name, '|');
+                            if inline_vals.len() != ifs.len() {
+                                return Err(format!(
+                                    "inline_width_mismatch: {} expected {}, got {}",
+                                    att_name,
+                                    ifs.len(),
+                                    inline_vals.len()
+                                ));
+                            }
+                            let mut obj = Map::new();
+                            for (k, inf) in ifs.iter().enumerate() {
+                                let p = parse_scalar(&inline_vals[k], true)?;
+                                match p {
+                                    ScalarValue::Missing => {}
+                                    _ => {
+                                        obj.insert(inf.clone(), scalar_to_value(&p)?);
+                                    }
+                                }
+                            }
+                            row.insert(att_name.clone(), Value::Object(obj));
+                            resolved_attachments.insert(att_name);
+                            i += 1;
+                            continue;
+                        }
+                    }
+
+                    // Traditional attachment: .fieldname {} or .fieldname [N]...
+                    let (att_name_t, att_val, consumed, parsed_fields) =
+                        parse_attachment_v3(lines, i, rest, depth + 2, &shared_array_schemas)?;
+                    // Store authoritative field order from the header for shared schema.
+                    if rows.is_empty() {
+                        if let Some(pf) = parsed_fields {
+                            shared_array_schemas.insert(att_name_t.clone(), pf);
+                        }
+                    }
+                    resolved_attachments.insert(att_name_t.clone());
+                    row.insert(att_name_t, att_val);
+                    i += consumed;
+                    continue;
+                }
+
+                // No-prefix line: must be positional inline data.
+                let mut found_inline = false;
+                let mut next_inline_field = String::new();
+                while inline_idx < inline_att_order.len() {
+                    let candidate = &inline_att_order[inline_idx];
+                    if !resolved_attachments.contains(candidate) {
+                        next_inline_field = candidate.clone();
+                        found_inline = true;
+                        break;
+                    }
+                    inline_idx += 1;
+                }
+                if !found_inline {
+                    break; // no more inline fields expected
+                }
+
+                let ifs = inline_schemas
+                    .get(&next_inline_field)
+                    .ok_or_else(|| {
+                        format!("missing inline schema for field: {}", next_inline_field)
+                    })?
+                    .clone();
+                let inline_vals = split_respecting_quotes(a_content, '|');
+                if inline_vals.len() != ifs.len() {
+                    return Err(format!(
+                        "inline_width_mismatch: {} expected {}, got {}",
+                        next_inline_field,
+                        ifs.len(),
+                        inline_vals.len()
+                    ));
+                }
+                let mut obj = Map::new();
+                for (k, inf) in ifs.iter().enumerate() {
+                    let p = parse_scalar(&inline_vals[k], true)?;
+                    match p {
+                        ScalarValue::Missing => {}
+                        _ => {
+                            obj.insert(inf.clone(), scalar_to_value(&p)?);
+                        }
+                    }
+                }
+                resolved_attachments.insert(next_inline_field.clone());
+                row.insert(next_inline_field, Value::Object(obj));
+                inline_idx += 1;
+                i += 1;
+            }
+
+            // Verify all attachment fields resolved.
+            for f in &all_att_fields {
+                if !resolved_attachments.contains(f) {
                     return Err(format!("missing_attachment: {}", f));
                 }
             }
-        }
 
-        // Check orphan.
-        if !row_has_id || attachment_fields.is_empty() {
-            let att_indent = format!("{}  ", ind);
-            if i < lines.len() && lines[i].starts_with(&att_indent) {
-                let peek = &lines[i][att_indent.len()..];
-                if peek.starts_with('.') {
-                    return Err(format!("orphan_attachment: {}", peek));
+            // Check for extra attachment lines after all fields resolved (duplicate).
+            if i < lines.len() {
+                let extra_line = &lines[i];
+                let extra_content = if extra_line.starts_with(&format!("{}  ", ind)) {
+                    &extra_line[ind.len() + 2..]
+                } else if extra_line.starts_with(&ind) {
+                    &extra_line[ind.len()..]
+                } else {
+                    ""
+                };
+                if extra_content.starts_with('.') {
+                    let (extra_name, _) = parse_attachment_name(&extra_content[1..]);
+                    if resolved_attachments.contains(&extra_name) {
+                        return Err(format!("duplicate_attachment: {}", extra_name));
+                    }
                 }
             }
         }
 
-        // Build row in field order.
-        let mut row = Map::new();
-        for f in fields {
-            if missing_fields.contains(f) {
-                continue;
-            }
-            if let Some(v) = cell_values.remove(f) {
-                row.insert(f.clone(), v);
-                continue;
-            }
-            if let Some(v) = attachment_values.remove(f) {
-                row.insert(f.clone(), v);
-                continue;
-            }
-        }
         rows.push(Value::Object(row));
 
         if expected_count >= 0 && rows.len() as i64 >= expected_count {
@@ -468,14 +646,10 @@ fn parse_tabular_body(
     Ok((rows, i - start))
 }
 
-fn parse_attachment(
-    lines: &[String],
-    line_idx: usize,
-    rest: &str,
-    depth: usize,
-) -> Result<(String, Value, usize), String> {
-    let (name, after_name) = if rest.starts_with('"') {
-        let mut close_idx = None;
+/// Parse attachment name from the rest of an attachment line (after the leading dot).
+/// Returns (name, remainder_after_name).
+fn parse_attachment_name(rest: &str) -> (String, &str) {
+    if rest.starts_with('"') {
         let bytes = rest.as_bytes();
         let mut j = 1;
         while j < bytes.len() {
@@ -484,32 +658,126 @@ fn parse_attachment(
                 continue;
             }
             if bytes[j] == b'"' {
-                close_idx = Some(j);
-                break;
+                if let Ok(parsed) = parse_quoted_string(&rest[..j + 1]) {
+                    return (parsed, &rest[j + 1..]);
+                }
+                return (String::new(), rest);
             }
             j += 1;
         }
-        let ci = close_idx.ok_or("unterminated_quote")?;
-        let name = parse_quoted_string(&rest[..ci + 1])?;
-        (name, rest[ci + 1..].trim_start())
+        (String::new(), rest)
     } else {
-        let sp = rest
-            .find(' ')
-            .ok_or_else(|| format!("invalid attachment: {}", rest))?;
-        (rest[..sp].to_string(), rest[sp..].trim_start())
-    };
+        if let Some(sp) = rest.find(' ') {
+            (rest[..sp].to_string(), &rest[sp..])
+        } else {
+            (rest.to_string(), "")
+        }
+    }
+}
 
+/// v3 parse_attachment that returns parsed field names for shared schema support.
+/// Returns (name, value, lines_consumed, parsed_fields).
+fn parse_attachment_v3(
+    lines: &[String],
+    line_idx: usize,
+    rest: &str,
+    depth: usize,
+    shared_schemas: &std::collections::HashMap<String, Vec<String>>,
+) -> Result<(String, Value, usize, Option<Vec<String>>), String> {
+    let (name, after_name_raw) = parse_attachment_name(rest);
+    if name.is_empty() && !rest.starts_with("\"\"") {
+        return Err("invalid attachment".into());
+    }
+    let after_name = after_name_raw.trim_start();
+
+    // Object: {}
     if after_name.starts_with("{}") {
         let mut nested = Map::new();
         let consumed = parse_object_body(lines, line_idx + 1, depth, &mut nested)?;
-        return Ok((name, Value::Object(nested), consumed + 1));
+        return Ok((name, Value::Object(nested), consumed + 1, None));
     }
+
+    // Array: [N]{fields} or [N]: or [N]
     if after_name.starts_with('[') {
+        let close_bracket = after_name
+            .find(']')
+            .ok_or_else(|| "invalid_count: missing ]".to_string())?;
+        let after_close = &after_name[close_bracket + 1..];
+
+        // [N]{fields} - has its own schema.
+        if after_close.starts_with('{') {
+            let end_brace = find_closing_brace(after_close);
+            let mut parsed_fields: Option<Vec<String>> = None;
+            if let Some(eb) = end_brace {
+                if let Ok(pf) = split_field_decl(&after_close[..eb + 1]) {
+                    parsed_fields = Some(pf);
+                }
+            }
+            let (arr, consumed) = parse_array_from_header(lines, line_idx, depth, after_name)?;
+            return Ok((name, arr, consumed, parsed_fields));
+        }
+
+        // [N]: values (inline primitive array): don't use shared schema.
+        if after_close.starts_with(": ") || after_close == ":" {
+            let (arr, consumed) = parse_array_from_header(lines, line_idx, depth, after_name)?;
+            return Ok((name, arr, consumed, None));
+        }
+
+        // [N] without {fields}: check for shared schema.
+        // Only use shared schema if the next line looks tabular (not @N expanded).
+        if let Some(sf) = shared_schemas.get(&name) {
+            let count_str = &after_name[1..close_bracket];
+            let count: i64 = if count_str == "?" {
+                -1
+            } else {
+                parse_count(count_str)? as i64
+            };
+            if count == 0 {
+                return Ok((name, Value::Array(vec![]), 1, None));
+            }
+            // Peek at next line: if it starts with @ it's expanded, not tabular.
+            let mut use_shared = true;
+            let next_idx = line_idx + 1;
+            let indent_str = "  ".repeat(depth);
+            if next_idx < lines.len() {
+                let next_line = &lines[next_idx];
+                let next_content = if depth > 0 && next_line.starts_with(&indent_str) {
+                    &next_line[indent_str.len()..]
+                } else {
+                    next_line.as_str()
+                };
+                if next_content.trim_start().starts_with('@') {
+                    use_shared = false;
+                }
+            }
+            if use_shared {
+                let (tab_rows, consumed) = parse_tabular_body_with_shared(
+                    lines,
+                    line_idx + 1,
+                    depth,
+                    sf,
+                    count,
+                    Some(shared_schemas),
+                )?;
+                if count >= 0 && tab_rows.len() as i64 != count {
+                    return Err(format!(
+                        "count_mismatch: declared {}, got {}",
+                        count,
+                        tab_rows.len()
+                    ));
+                }
+                return Ok((name, Value::Array(tab_rows), consumed + 1, None));
+            }
+        }
+
+        // No shared schema: standard expanded array.
         let (arr, consumed) = parse_array_from_header(lines, line_idx, depth, after_name)?;
-        return Ok((name, arr, consumed));
+        return Ok((name, arr, consumed, None));
     }
+
     Err(format!("invalid attachment form: {}", after_name))
 }
+
 
 fn parse_expanded_body(
     lines: &[String],
