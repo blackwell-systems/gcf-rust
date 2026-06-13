@@ -1,6 +1,6 @@
 [package]
 name = "gcf"
-version = "1.0.1"
+version = "2.0.0"
 edition = "2021"
 description = "Drop-in JSON replacement for AI pipelines. 79% fewer tokens. 90.7% comprehension across 10 models. Zero dependencies."
 license = "MIT"
