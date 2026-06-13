@@ -1,4 +1,4 @@
-//! GCF v2.0 generic decoder: parses GCF generic or graph profile text into serde_json::Value.
+//! GCF generic decoder: parses GCF generic or graph profile text into serde_json::Value.
 
 use crate::decode::decode;
 use crate::scalar::{
@@ -7,7 +7,7 @@ use crate::scalar::{
 };
 use serde_json::{Map, Number, Value};
 
-/// Decode GCF v2.0 text into a generic `serde_json::Value`.
+/// Decode GCF text into a generic `serde_json::Value`.
 pub fn decode_generic(input: &str) -> Result<Value, String> {
     let input = input.trim_end_matches(['\n', '\r']);
     if input.is_empty() {

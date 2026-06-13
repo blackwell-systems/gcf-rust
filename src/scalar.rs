@@ -40,17 +40,21 @@ pub fn needs_quote(s: &str) -> bool {
     if bytes[0] == b' ' || bytes[bytes.len() - 1] == b' ' {
         return true;
     }
-    if bytes[0] == b'#' || bytes[0] == b'@' {
+    if bytes[0] == b'#' || bytes[0] == b'@' || bytes[0] == b'.' {
         return true;
     }
     for c in s.chars() {
+        let code = c as u32;
         if c == '"'
             || c == '\\'
             || c == '|'
             || c == ','
-            || (c as u32) < 0x20
+            || code < 0x20
             || c == '\n'
             || c == '\r'
+            || (code >= 0x80 && code <= 0x9F) // C1 controls
+            || (code > 0x7F && matches!(code, 0xA0 | 0x1680 | 0x2028 | 0x2029 | 0x202F | 0x205F | 0x3000 | 0xFEFF))
+            || (0x2000..=0x200A).contains(&code) // Unicode spaces
         {
             return true;
         }
