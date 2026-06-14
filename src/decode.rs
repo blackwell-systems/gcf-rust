@@ -8,7 +8,6 @@ use std::fmt;
 pub enum DecodeError {
     EmptyInput,
     InvalidHeader(String),
-    MissingTool,
     InvalidField(String),
     InvalidSymbolLine(String),
     InvalidEdgeLine(String),
@@ -21,9 +20,6 @@ impl fmt::Display for DecodeError {
             DecodeError::EmptyInput => write!(f, "gcf: empty input"),
             DecodeError::InvalidHeader(h) => {
                 write!(f, "gcf: invalid header, expected 'GCF ...' got {:?}", h)
-            }
-            DecodeError::MissingTool => {
-                write!(f, "missing_tool: header missing required 'tool' field")
             }
             DecodeError::InvalidField(msg) => write!(f, "gcf: {}", msg),
             DecodeError::InvalidSymbolLine(msg) => write!(f, "invalid_node_line: {}", msg),
@@ -58,9 +54,7 @@ pub fn decode(input: &str) -> Result<Payload, DecodeError> {
 
     parse_header(&header[4..], &mut p)?;
 
-    if p.tool.is_empty() {
-        return Err(DecodeError::MissingTool);
-    }
+    // v3.1: tool field is optional (SHOULD be present for MCP tool responses, not required).
 
     let mut symbols: Vec<Symbol> = Vec::new();
     let mut sym_by_id: HashMap<usize, usize> = HashMap::new(); // id -> index in symbols vec
@@ -313,13 +307,11 @@ GCF tool=context_for_task budget=5000 tokens=1847 symbols=2
     }
 
     #[test]
-    fn test_decode_rejects_missing_tool() {
+    fn test_decode_accepts_no_tool() {
+        // v3.1: tool field is optional.
         let result = decode("GCF budget=100 tokens=50 symbols=0");
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            DecodeError::MissingTool => {}
-            other => panic!("expected MissingTool, got {:?}", other),
-        }
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().tool, "");
     }
 
     #[test]

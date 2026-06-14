@@ -49,6 +49,7 @@ pub fn needs_quote(s: &str) -> bool {
         if c == '"'
             || c == '\\'
             || c == '|'
+            || c == ','
             || code < 0x20
             || c == '\n'
             || c == '\r'
