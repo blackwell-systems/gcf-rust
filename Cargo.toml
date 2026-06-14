@@ -1,6 +1,6 @@
 [package]
 name = "gcf"
-version = "2.0.0"
+version = "2.1.0"
 edition = "2021"
 description = "Drop-in JSON replacement for AI pipelines. 79% fewer tokens. 90.7% comprehension across 10 models. Zero dependencies."
 license = "MIT"
@@ -25,3 +25,8 @@ serde_json = { version = "1", features = ["preserve_order"] }
 
 [dev-dependencies]
 serde_json = { version = "1", features = ["preserve_order"] }
+serde_yaml = "0.9"
+csv = "1"
+rmp-serde = "1"
+toml = "0.8"
+rayon = "1"
