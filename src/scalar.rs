@@ -12,6 +12,8 @@ static NUMERIC_LIKE_RE: LazyLock<Regex> =
 static BARE_KEY_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]*$").unwrap());
 
+static INLINE_ARRAY_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[[^\]]*\]\s*:").unwrap());
+
 /// Sentinel for absent fields in tabular rows.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ScalarValue {
@@ -42,6 +44,9 @@ pub fn needs_quote(s: &str) -> bool {
         return true;
     }
     if bytes[0] == b'#' || bytes[0] == b'@' || bytes[0] == b'.' {
+        return true;
+    }
+    if INLINE_ARRAY_RE.is_match(s) {
         return true;
     }
     for c in s.chars() {

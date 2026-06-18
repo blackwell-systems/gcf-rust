@@ -183,7 +183,20 @@ fn parse_object_body(
             continue;
         }
 
-        // Inline array.
+        // Key=value. Check before inline array so bracket patterns in quoted
+        // values (e.g. text="ERR[404]: Not Found") are not misinterpreted.
+        if let Some(eq_idx) = find_kv_split(content) {
+            if eq_idx > 0 {
+                let name = parse_key_from_header(&content[..eq_idx])?;
+                check_dup(out, &name)?;
+                let val = scalar_to_value(&parse_scalar(&content[eq_idx + 1..], false)?)?;
+                out.insert(name, val);
+                i += 1;
+                continue;
+            }
+        }
+
+        // Inline array (e.g. items[3]: a,b,c). Only reached if no = found.
         if !content.starts_with('@') && !content.starts_with("##") {
             if let Some(bracket_idx) = content.find('[') {
                 if bracket_idx > 0 {
@@ -200,18 +213,6 @@ fn parse_object_body(
                         }
                     }
                 }
-            }
-        }
-
-        // Key=value.
-        if let Some(eq_idx) = find_kv_split(content) {
-            if eq_idx > 0 {
-                let name = parse_key_from_header(&content[..eq_idx])?;
-                check_dup(out, &name)?;
-                let val = scalar_to_value(&parse_scalar(&content[eq_idx + 1..], false)?)?;
-                out.insert(name, val);
-                i += 1;
-                continue;
             }
         }
 
@@ -243,7 +244,13 @@ fn find_kv_split(s: &str) -> Option<usize> {
         }
         return None;
     }
-    s.find('=')
+    let eq_idx = s.find('=')?;
+    if let Some(bracket_idx) = s.find('[') {
+        if bracket_idx < eq_idx {
+            return None;
+        }
+    }
+    Some(eq_idx)
 }
 
 fn parse_key_from_header(s: &str) -> Result<String, String> {
