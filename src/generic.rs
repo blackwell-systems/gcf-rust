@@ -355,7 +355,7 @@ fn resolve_key_chain(item: &Value, keys: &[String]) -> Option<Value> {
 
 /// Check if the top-level key exists in the item.
 fn key_exists(item: &Value, key: &str) -> bool {
-    item.as_object().map_or(false, |m| m.contains_key(key))
+    item.as_object().is_some_and(|m| m.contains_key(key))
 }
 
 /// A column in the expanded (flattened) field list.
