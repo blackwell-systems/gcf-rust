@@ -3,18 +3,33 @@
 use crate::scalar::{format_key, format_number, format_scalar};
 use serde_json::Value;
 
+/// Options for controlling generic encoding behavior.
+#[derive(Debug, Clone, Default)]
+pub struct GenericOptions {
+    /// When true, disables promotion of fixed-shape nested objects to path
+    /// columns (e.g. "customer>name"). Nested objects use attachment syntax
+    /// instead. Set when targeting open-weight models that show lower
+    /// comprehension on flattened encoding.
+    pub no_flatten: bool,
+}
+
 /// Encode any JSON value into GCF generic profile.
 pub fn encode_generic(data: &Value) -> String {
+    encode_generic_with_options(data, &GenericOptions::default())
+}
+
+/// Encode any JSON value into GCF generic profile with the given options.
+pub fn encode_generic_with_options(data: &Value, opts: &GenericOptions) -> String {
     let mut out = String::from("GCF profile=generic\n");
-    encode_root_value(data, &mut out);
+    encode_root_value(data, &mut out, opts);
     out
 }
 
-fn encode_root_value(v: &Value, out: &mut String) {
+fn encode_root_value(v: &Value, out: &mut String, opts: &GenericOptions) {
     match v {
         Value::Null => out.push_str("=-\n"),
-        Value::Object(map) => encode_object(map, out, 0),
-        Value::Array(arr) => encode_root_array(arr, out),
+        Value::Object(map) => encode_object(map, out, 0, opts),
+        Value::Array(arr) => encode_root_array(arr, out, opts),
         Value::Bool(b) => {
             out.push('=');
             out.push_str(if *b { "true" } else { "false" });
@@ -33,7 +48,7 @@ fn encode_root_value(v: &Value, out: &mut String) {
     }
 }
 
-fn encode_object(map: &serde_json::Map<String, Value>, out: &mut String, depth: usize) {
+fn encode_object(map: &serde_json::Map<String, Value>, out: &mut String, depth: usize, opts: &GenericOptions) {
     let prefix = indent(depth);
     for (key, value) in map {
         let fk = format_key(key);
@@ -43,9 +58,9 @@ fn encode_object(map: &serde_json::Map<String, Value>, out: &mut String, depth: 
                 out.push_str("## ");
                 out.push_str(&fk);
                 out.push('\n');
-                encode_object(sub, out, depth + 1);
+                encode_object(sub, out, depth + 1, opts);
             }
-            Value::Array(arr) => encode_named_array(&fk, arr, out, depth),
+            Value::Array(arr) => encode_named_array(&fk, arr, out, depth, opts),
             _ => {
                 out.push_str(&prefix);
                 out.push_str(&fk);
@@ -57,7 +72,7 @@ fn encode_object(map: &serde_json::Map<String, Value>, out: &mut String, depth: 
     }
 }
 
-fn encode_root_array(arr: &[Value], out: &mut String) {
+fn encode_root_array(arr: &[Value], out: &mut String, opts: &GenericOptions) {
     if arr.is_empty() {
         out.push_str("## [0]\n");
         return;
@@ -68,13 +83,13 @@ fn encode_root_array(arr: &[Value], out: &mut String) {
         return;
     }
     if let Some(fields) = tabular_fields(arr) {
-        encode_tabular("## ", arr, &fields, out, 0);
+        encode_tabular("## ", arr, &fields, out, 0, opts);
         return;
     }
-    encode_expanded("## ", arr, out, 0);
+    encode_expanded("## ", arr, out, 0, opts);
 }
 
-fn encode_named_array(name: &str, arr: &[Value], out: &mut String, depth: usize) {
+fn encode_named_array(name: &str, arr: &[Value], out: &mut String, depth: usize, opts: &GenericOptions) {
     let prefix = indent(depth);
     if arr.is_empty() {
         out.push_str(&format!("{}## {} [0]\n", prefix, name));
@@ -92,10 +107,10 @@ fn encode_named_array(name: &str, arr: &[Value], out: &mut String, depth: usize)
         return;
     }
     if let Some(fields) = tabular_fields(arr) {
-        encode_tabular(&format!("{}## {} ", prefix, name), arr, &fields, out, depth);
+        encode_tabular(&format!("{}## {} ", prefix, name), arr, &fields, out, depth, opts);
         return;
     }
-    encode_expanded(&format!("{}## {} ", prefix, name), arr, out, depth);
+    encode_expanded(&format!("{}## {} ", prefix, name), arr, out, depth, opts);
 }
 
 fn tabular_fields(arr: &[Value]) -> Option<Vec<String>> {
@@ -210,6 +225,10 @@ fn analyze_flattenable(
     field_name: &str,
     parent_path: &str,
 ) -> Option<Vec<FlatLeaf>> {
+    // Field names containing ">" cannot be flattened (would create ambiguous paths).
+    if field_name.contains('>') {
+        return None;
+    }
     let mut canonical_keys: Option<Vec<String>> = None;
     let mut canonical_shape: std::collections::HashMap<String, &'static str> =
         std::collections::HashMap::new();
@@ -375,23 +394,37 @@ fn encode_tabular(
     fields: &[String],
     out: &mut String,
     depth: usize,
+    opts: &GenericOptions,
 ) {
     let prefix = indent(depth);
 
     // Phase 0: Analyze fields for flattening.
     let mut flatten_map: std::collections::HashMap<String, Vec<FlatLeaf>> =
         std::collections::HashMap::new();
-    for f in fields {
-        if let Some(leaves) = analyze_flattenable(arr, f, "") {
-            if !leaves.is_empty() {
-                flatten_map.insert(f.clone(), leaves);
+    if !opts.no_flatten {
+        for f in fields {
+            if let Some(leaves) = analyze_flattenable(arr, f, "") {
+                if !leaves.is_empty() {
+                    flatten_map.insert(f.clone(), leaves);
+                }
             }
         }
     }
 
+    // Fields whose names contain ">" must not appear as tabular columns
+    // because the decoder would interpret them as flattened path columns.
+    // Track them for per-row attachment emission (spec rule 7.4.6.1.4).
+    let gt_fields: std::collections::HashSet<&String> = fields
+        .iter()
+        .filter(|f| !flatten_map.contains_key(*f) && f.contains('>'))
+        .collect();
+
     // Build expanded column list.
     let mut columns: Vec<FlatColumn> = Vec::new();
     for f in fields {
+        if gt_fields.contains(f) {
+            continue;
+        }
         if let Some(leaves) = flatten_map.get(f) {
             for leaf in leaves {
                 columns.push(FlatColumn {
@@ -409,6 +442,12 @@ fn encode_tabular(
                 keys: Vec::new(),
             });
         }
+    }
+
+    // If all fields were excluded (all contain ">"), fall back to expanded.
+    if columns.is_empty() {
+        encode_expanded(header_prefix, arr, out, depth, opts);
+        return;
     }
 
     // Pre-compute inline schemas and shared array schemas (skip flattened fields).
@@ -520,6 +559,24 @@ fn encode_tabular(
             }
         }
 
+        // Emit fields with ">" in their names as per-row attachments.
+        if let Some(obj) = item.as_object() {
+            for f in fields {
+                if !gt_fields.contains(f) {
+                    continue;
+                }
+                if let Some(v) = obj.get(f) {
+                    row_has_attachment = true;
+                    attachments.push(Att {
+                        name: f.clone(),
+                        value: v.clone(),
+                        inline: false,
+                        inline_fields: None,
+                    });
+                }
+            }
+        }
+
         let row = cells.join("|");
         if row_has_attachment {
             out.push_str(&format!("{}@{} {}\n", prefix, i, row));
@@ -546,7 +603,7 @@ fn encode_tabular(
                 match &att.value {
                     Value::Object(sub) => {
                         out.push_str(&format!("{}.{} {{}}\n", prefix, fk));
-                        encode_object(sub, out, depth + 2);
+                        encode_object(sub, out, depth + 2, opts);
                     }
                     Value::Array(sub) => {
                         if let Some(sas) = shared_arr_schemas.get(&att.name) {
@@ -558,15 +615,24 @@ fn encode_tabular(
                                     out,
                                     depth + 2,
                                     sas,
+                                    opts,
                                 );
                             } else {
-                                encode_attachment_array(&prefix, &fk, sub, out, depth + 2);
+                                encode_attachment_array(&prefix, &fk, sub, out, depth + 2, opts);
                             }
                         } else {
-                            encode_attachment_array(&prefix, &fk, sub, out, depth + 2);
+                            encode_attachment_array(&prefix, &fk, sub, out, depth + 2, opts);
                         }
                     }
-                    _ => {}
+                    _ => {
+                        // Scalar attachment (e.g. field names containing ">").
+                        out.push_str(&format!(
+                            "{}.{} ={}\n",
+                            prefix,
+                            fk,
+                            format_scalar(&att.value, '\0')
+                        ));
+                    }
                 }
             }
         }
@@ -580,6 +646,7 @@ fn encode_attachment_array_shared(
     out: &mut String,
     depth: usize,
     shared_fields: &[String],
+    opts: &GenericOptions,
 ) {
     if arr.is_empty() {
         out.push_str(&format!("{}.{} [0]\n", att_prefix, fk));
@@ -616,7 +683,7 @@ fn encode_attachment_array_shared(
             return;
         }
     }
-    encode_attachment_array(att_prefix, fk, arr, out, depth);
+    encode_attachment_array(att_prefix, fk, arr, out, depth, opts);
 }
 
 fn encode_attachment_array(
@@ -625,6 +692,7 @@ fn encode_attachment_array(
     arr: &[Value],
     out: &mut String,
     depth: usize,
+    opts: &GenericOptions,
 ) {
     if arr.is_empty() {
         out.push_str(&format!("{}.{} [0]\n", att_prefix, fk));
@@ -638,22 +706,22 @@ fn encode_attachment_array(
             vals.join(",")
         ));
     } else if let Some(fields) = tabular_fields(arr) {
-        encode_tabular(&format!("{}.{} ", att_prefix, fk), arr, &fields, out, depth);
+        encode_tabular(&format!("{}.{} ", att_prefix, fk), arr, &fields, out, depth, opts);
     } else {
-        encode_expanded(&format!("{}.{} ", att_prefix, fk), arr, out, depth);
+        encode_expanded(&format!("{}.{} ", att_prefix, fk), arr, out, depth, opts);
     }
 }
 
-fn encode_expanded(header_prefix: &str, arr: &[Value], out: &mut String, depth: usize) {
+fn encode_expanded(header_prefix: &str, arr: &[Value], out: &mut String, depth: usize, opts: &GenericOptions) {
     let prefix = indent(depth);
     out.push_str(&format!("{}[{}]\n", header_prefix, arr.len()));
     for (i, item) in arr.iter().enumerate() {
         match item {
             Value::Object(map) => {
                 out.push_str(&format!("{}@{} {{}}\n", prefix, i));
-                encode_object(map, out, depth + 1);
+                encode_object(map, out, depth + 1, opts);
             }
-            Value::Array(sub) => encode_expanded_array_item(&prefix, i, sub, out, depth),
+            Value::Array(sub) => encode_expanded_array_item(&prefix, i, sub, out, depth, opts),
             _ => {
                 out.push_str(&format!(
                     "{}@{} ={}\n",
@@ -672,6 +740,7 @@ fn encode_expanded_array_item(
     arr: &[Value],
     out: &mut String,
     depth: usize,
+    opts: &GenericOptions,
 ) {
     if arr.is_empty() {
         out.push_str(&format!("{}@{} [0]\n", prefix, idx));
@@ -691,9 +760,10 @@ fn encode_expanded_array_item(
             &fields,
             out,
             depth + 1,
+            opts,
         );
     } else {
-        encode_expanded(&format!("{}@{} ", prefix, idx), arr, out, depth + 1);
+        encode_expanded(&format!("{}@{} ", prefix, idx), arr, out, depth + 1, opts);
     }
 }
 
@@ -729,5 +799,78 @@ mod tests {
         let data = json!({"val": "true"});
         let output = encode_generic(&data);
         assert!(output.contains("val=\"true\""));
+    }
+
+    #[test]
+    fn test_no_flatten_option() {
+        let data = json!({
+            "orders": [
+                {"id": "ORD-1", "customer": {"name": "Alice", "email": "alice@co.com"}, "total": 99.99},
+                {"id": "ORD-2", "customer": {"name": "Bob", "email": "bob@co.com"}, "total": 49.99}
+            ]
+        });
+
+        // Default (flatten on): should have path columns.
+        let with_flatten = encode_generic(&data);
+        assert!(with_flatten.contains("customer>"), "expected path columns with default, got:\n{}", with_flatten);
+
+        // Flatten off: should have attachment syntax, no path columns.
+        let no_flatten = encode_generic_with_options(&data, &GenericOptions { no_flatten: true });
+        assert!(!no_flatten.contains("customer>"), "expected no path columns with no_flatten, got:\n{}", no_flatten);
+        assert!(no_flatten.contains(".customer"), "expected attachment syntax with no_flatten, got:\n{}", no_flatten);
+
+        // Both must round-trip (compare as Values to ignore key order).
+        let decoded_on = crate::decode_generic(&with_flatten).expect("decode flatten-on failed");
+        let decoded_off = crate::decode_generic(&no_flatten).expect("decode flatten-off failed");
+        assert_eq!(data, decoded_on, "flatten-on round-trip mismatch");
+        assert_eq!(data, decoded_off, "flatten-off round-trip mismatch");
+    }
+
+    #[test]
+    fn test_gt_field_edge_cases() {
+        let cases: Vec<(&str, Value)> = vec![
+            ("literal > key", json!([{">": 1}, {">": 2}])),
+            ("> at start", json!([{">foo": "a", "id": 1}, {">foo": "b", "id": 2}])),
+            ("> at end", json!([{"foo>": "a", "id": 1}, {"foo>": "b", "id": 2}])),
+            ("double >>", json!([{"a>>b": "x"}, {"a>>b": "y"}])),
+            ("multiple > in key", json!([{"a>b>c": "x"}, {"a>b>c": "y"}])),
+            ("> field with null", json!([{"a>b": null, "id": 1}, {"a>b": "hello", "id": 2}])),
+            ("> field with object", json!([
+                {"a>b": {"x": 1}, "id": 1},
+                {"a>b": {"x": 2}, "id": 2},
+            ])),
+            ("> field with array", json!([
+                {"a>b": [1, 2], "id": 1},
+                {"a>b": [3], "id": 2},
+            ])),
+            ("all fields have >", json!([{">": 1, "a>b": 2}, {">": 3, "a>b": 4}])),
+            ("mix of > literal and flattened", json!([
+                {"id": 1, "x>y": "lit", "nested": {"a": "v1", "b": "v2"}},
+                {"id": 2, "x>y": "lit2", "nested": {"a": "v3", "b": "v4"}},
+            ])),
+            ("> field absent in some rows", json!([
+                {"id": 1, "a>b": "present"},
+                {"id": 2},
+            ])),
+            ("key looks like flattened path", json!([
+                {"id": 1, "customer>name": "Alice"},
+                {"id": 2, "customer>name": "Bob"},
+            ])),
+        ];
+
+        for (name, data) in &cases {
+            for no_flatten in [false, true] {
+                let opts = GenericOptions { no_flatten };
+                let encoded = encode_generic_with_options(data, &opts);
+                let decoded = crate::decode_generic(&encoded).unwrap_or_else(|e| {
+                    panic!("{} (no_flatten={}): decode failed: {}\n  gcf: {:?}", name, no_flatten, e, encoded);
+                });
+                assert_eq!(
+                    data, &decoded,
+                    "{} (no_flatten={}): round-trip mismatch\n  gcf: {:?}",
+                    name, no_flatten, encoded
+                );
+            }
+        }
     }
 }

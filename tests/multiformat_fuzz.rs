@@ -1,4 +1,4 @@
-use gcf::{decode_generic, encode_generic};
+use gcf::{decode_generic, encode_generic, encode_generic_with_options, GenericOptions};
 use serde_json::Value;
 use std::io::Write;
 use std::time::Instant;
@@ -12,7 +12,7 @@ fn iterations() -> usize {
 const PROGRESS_INTERVAL: usize = 10_000_000;
 
 fn gen_key(seed: u64) -> String {
-    let chars: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.";
+    let chars: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.>";
     let mut rng = seed;
     let len = (rng_next(&mut rng) % 14) as usize + 1;
     let mut s = String::with_capacity(len);
@@ -144,12 +144,19 @@ fn values_equal(a: &Value, b: &Value) -> bool {
 }
 
 fn gcf_roundtrip(data: &Value) -> Result<(), String> {
-    let encoded = encode_generic(data);
-    let decoded = decode_generic(&encoded).map_err(|e| format!("decode failed: {e}"))?;
-    if !values_equal(data, &decoded) {
-        let a = serde_json::to_string(data).unwrap();
-        let b = serde_json::to_string(&decoded).unwrap();
-        return Err(format!("mismatch\n  original: {a}\n  decoded:  {b}"));
+    // Test both flatten-on and flatten-off.
+    for no_flatten in [false, true] {
+        let encoded = encode_generic_with_options(data, &GenericOptions { no_flatten });
+        let decoded = decode_generic(&encoded).map_err(|e| {
+            format!("decode failed (no_flatten={no_flatten}): {e}")
+        })?;
+        if !values_equal(data, &decoded) {
+            let a = serde_json::to_string(data).unwrap();
+            let b = serde_json::to_string(&decoded).unwrap();
+            return Err(format!(
+                "mismatch (no_flatten={no_flatten})\n  original: {a}\n  decoded:  {b}"
+            ));
+        }
     }
     Ok(())
 }

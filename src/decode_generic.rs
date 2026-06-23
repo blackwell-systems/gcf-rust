@@ -440,7 +440,12 @@ fn parse_tabular_body_with_shared(
         std::collections::HashMap::new();
     for f in fields {
         if f.contains('>') {
-            path_column_map.insert(f.clone(), f.split('>').map(|s| s.to_string()).collect());
+            let parts: Vec<String> = f.split('>').map(|s| s.to_string()).collect();
+            // Only treat as a path column if all segments are non-empty.
+            // A literal key like ">" would split into ["", ""].
+            if parts.iter().all(|p| !p.is_empty()) {
+                path_column_map.insert(f.clone(), parts);
+            }
         }
     }
 
@@ -569,33 +574,12 @@ fn parse_tabular_body_with_shared(
             }
         }
 
-        // Check for orphan attachments when row has ID but no ^ cells.
-        if row_has_id && all_att_fields.is_empty() {
-            if i < lines.len() {
-                let peek_line = &lines[i];
-                let peek_content = if peek_line.starts_with(&format!("{}  ", ind)) {
-                    &peek_line[ind.len() + 2..]
-                } else if peek_line.starts_with(&ind) {
-                    &peek_line[ind.len()..]
-                } else {
-                    ""
-                };
-                if peek_content.starts_with('.') {
-                    let (orphan_name, _) = parse_attachment_name(&peek_content[1..]);
-                    return Err(format!(
-                        "orphan_attachment: .{} without matching ^ cell",
-                        orphan_name
-                    ));
-                }
-            }
-        }
-
-        if row_has_id && !all_att_fields.is_empty() {
+        if row_has_id {
             let mut resolved_attachments: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
             let mut inline_idx: usize = 0;
 
-            while i < lines.len() && resolved_attachments.len() < all_att_fields.len() {
+            while i < lines.len() {
                 let a_line = &lines[i];
                 let a_content = if a_line.starts_with(&format!("{}  ", ind)) {
                     &a_line[ind.len() + 2..]
@@ -611,14 +595,6 @@ fn parse_tabular_body_with_shared(
                     let (att_name, after_name_raw) = parse_attachment_name(rest);
                     let after_name = after_name_raw.trim_start();
 
-                    // Check orphan: attachment for field not in all_att_fields.
-                    let is_expected = all_att_fields.iter().any(|af| af == &att_name);
-                    if !is_expected {
-                        return Err(format!(
-                            "orphan_attachment: {} without matching ^ cell",
-                            att_name
-                        ));
-                    }
                     // Check duplicate.
                     if resolved_attachments.contains(&att_name) {
                         return Err(format!("duplicate_attachment: {}", att_name));
@@ -888,7 +864,17 @@ fn parse_attachment_v3(
         return Ok((name, arr, consumed, None));
     }
 
-    Err(format!("invalid attachment form: {}", after_name))
+    // Scalar: =value (field names containing ">" excluded from tabular columns).
+    if after_name.starts_with('=') {
+        let val_str = &after_name[1..];
+        let parsed = parse_scalar(val_str, true)?;
+        match parsed {
+            ScalarValue::Missing => Ok((name, Value::Null, 1, None)),
+            _ => Ok((name, scalar_to_value(&parsed)?, 1, None)),
+        }
+    } else {
+        Err(format!("invalid attachment form: {}", after_name))
+    }
 }
 
 fn parse_expanded_body(

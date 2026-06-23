@@ -1,4 +1,4 @@
-use gcf::{decode_generic, encode_generic};
+use gcf::{decode_generic, encode_generic, encode_generic_with_options, GenericOptions};
 use rayon::prelude::*;
 use serde_json::Value;
 use std::io::Write;
@@ -17,7 +17,7 @@ fn rng_next(state: &mut u64) -> u64 {
 }
 
 fn gen_key(rng: &mut u64) -> String {
-    let chars: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.";
+    let chars: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.>";
     let len = (rng_next(rng) % 14) as usize + 1;
     let mut s = String::with_capacity(len);
     s.push(chars[(rng_next(rng) % 52) as usize] as char);
@@ -121,20 +121,23 @@ fn run_parallel(
         let mut rng = seed;
         let data = gen(&mut rng);
 
-        let encoded = encode_generic(&data);
-        let decoded = match decode_generic(&encoded) {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("\nFAIL {name} seed={}: decode error: {e}", i + seed_offset);
+        // Test both flatten-on and flatten-off.
+        for no_flatten in [false, true] {
+            let encoded = encode_generic_with_options(&data, &GenericOptions { no_flatten });
+            let decoded = match decode_generic(&encoded) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("\nFAIL {name} seed={} no_flatten={no_flatten}: decode error: {e}", i + seed_offset);
+                    failed.fetch_add(1, Ordering::Relaxed);
+                    return;
+                }
+            };
+
+            if !values_equal(&data, &decoded) {
+                eprintln!("\nFAIL {name} seed={} no_flatten={no_flatten}: mismatch", i + seed_offset);
                 failed.fetch_add(1, Ordering::Relaxed);
                 return;
             }
-        };
-
-        if !values_equal(&data, &decoded) {
-            eprintln!("\nFAIL {name} seed={}: mismatch", i + seed_offset);
-            failed.fetch_add(1, Ordering::Relaxed);
-            return;
         }
 
         let p = passed.fetch_add(1, Ordering::Relaxed) + 1;

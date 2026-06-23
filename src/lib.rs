@@ -51,7 +51,7 @@ pub use decode::{decode, DecodeError};
 pub use decode_generic::decode_generic;
 pub use delta::encode_delta;
 pub use encode::encode;
-pub use generic::encode_generic;
+pub use generic::{encode_generic, encode_generic_with_options, GenericOptions};
 pub use session::{encode_with_session, Session};
 pub use stream::{StreamEncoder, StreamOptions};
 pub use stream_generic::GenericStreamEncoder;
