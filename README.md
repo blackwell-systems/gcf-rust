@@ -240,7 +240,7 @@ GCF wins 15/16 datasets on the expanded [token efficiency benchmark](https://git
 
 **Minimal dependencies. Permanently.** Rust implementation depends only on serde and serde_json for JSON interop. Five other implementations (Go, TypeScript, Python, Swift, Kotlin) have zero runtime dependencies. No unnecessary transitive dependencies. No supply chain risk. This is a permanent commitment: GCF will never take on external runtime dependencies beyond what the language ecosystem requires for JSON handling. MIT licensed. All implementations support both generic profile (`encode_generic`) and graph profile (`encode`). CLI included in all 6 languages.
 
-**Specification:** [SPEC v3.2 Stable](https://github.com/blackwell-systems/gcf/blob/main/SPEC.md) with 173 conformance fixtures, 43,000,000,000+ lossless round-trips verified across 5 formats and 6 languages. All implementations at v2.2.0+ (Go v1.3.0). Cross-language 6x6 matrix verified.
+**Specification:** [SPEC v3.2 Stable](https://github.com/blackwell-systems/gcf/blob/main/SPEC.md) with 174 conformance fixtures, 43,000,000,000+ lossless round-trips verified across 5 formats and 6 languages. All implementations at v2.2.1+ (Go v1.3.1). Cross-language 6x6 matrix verified.
 
 ## License
 
