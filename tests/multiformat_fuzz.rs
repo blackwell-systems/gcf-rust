@@ -147,9 +147,8 @@ fn gcf_roundtrip(data: &Value) -> Result<(), String> {
     // Test both flatten-on and flatten-off.
     for no_flatten in [false, true] {
         let encoded = encode_generic_with_options(data, &GenericOptions { no_flatten });
-        let decoded = decode_generic(&encoded).map_err(|e| {
-            format!("decode failed (no_flatten={no_flatten}): {e}")
-        })?;
+        let decoded = decode_generic(&encoded)
+            .map_err(|e| format!("decode failed (no_flatten={no_flatten}): {e}"))?;
         if !values_equal(data, &decoded) {
             let a = serde_json::to_string(data).unwrap();
             let b = serde_json::to_string(&decoded).unwrap();

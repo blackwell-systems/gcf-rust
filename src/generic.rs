@@ -48,7 +48,12 @@ fn encode_root_value(v: &Value, out: &mut String, opts: &GenericOptions) {
     }
 }
 
-fn encode_object(map: &serde_json::Map<String, Value>, out: &mut String, depth: usize, opts: &GenericOptions) {
+fn encode_object(
+    map: &serde_json::Map<String, Value>,
+    out: &mut String,
+    depth: usize,
+    opts: &GenericOptions,
+) {
     let prefix = indent(depth);
     for (key, value) in map {
         let fk = format_key(key);
@@ -89,7 +94,13 @@ fn encode_root_array(arr: &[Value], out: &mut String, opts: &GenericOptions) {
     encode_expanded("## ", arr, out, 0, opts);
 }
 
-fn encode_named_array(name: &str, arr: &[Value], out: &mut String, depth: usize, opts: &GenericOptions) {
+fn encode_named_array(
+    name: &str,
+    arr: &[Value],
+    out: &mut String,
+    depth: usize,
+    opts: &GenericOptions,
+) {
     let prefix = indent(depth);
     if arr.is_empty() {
         out.push_str(&format!("{}## {} [0]\n", prefix, name));
@@ -107,7 +118,14 @@ fn encode_named_array(name: &str, arr: &[Value], out: &mut String, depth: usize,
         return;
     }
     if let Some(fields) = tabular_fields(arr) {
-        encode_tabular(&format!("{}## {} ", prefix, name), arr, &fields, out, depth, opts);
+        encode_tabular(
+            &format!("{}## {} ", prefix, name),
+            arr,
+            &fields,
+            out,
+            depth,
+            opts,
+        );
         return;
     }
     encode_expanded(&format!("{}## {} ", prefix, name), arr, out, depth, opts);
@@ -706,13 +724,26 @@ fn encode_attachment_array(
             vals.join(",")
         ));
     } else if let Some(fields) = tabular_fields(arr) {
-        encode_tabular(&format!("{}.{} ", att_prefix, fk), arr, &fields, out, depth, opts);
+        encode_tabular(
+            &format!("{}.{} ", att_prefix, fk),
+            arr,
+            &fields,
+            out,
+            depth,
+            opts,
+        );
     } else {
         encode_expanded(&format!("{}.{} ", att_prefix, fk), arr, out, depth, opts);
     }
 }
 
-fn encode_expanded(header_prefix: &str, arr: &[Value], out: &mut String, depth: usize, opts: &GenericOptions) {
+fn encode_expanded(
+    header_prefix: &str,
+    arr: &[Value],
+    out: &mut String,
+    depth: usize,
+    opts: &GenericOptions,
+) {
     let prefix = indent(depth);
     out.push_str(&format!("{}[{}]\n", header_prefix, arr.len()));
     for (i, item) in arr.iter().enumerate() {
@@ -812,12 +843,24 @@ mod tests {
 
         // Default (flatten on): should have path columns.
         let with_flatten = encode_generic(&data);
-        assert!(with_flatten.contains("customer>"), "expected path columns with default, got:\n{}", with_flatten);
+        assert!(
+            with_flatten.contains("customer>"),
+            "expected path columns with default, got:\n{}",
+            with_flatten
+        );
 
         // Flatten off: should have attachment syntax, no path columns.
         let no_flatten = encode_generic_with_options(&data, &GenericOptions { no_flatten: true });
-        assert!(!no_flatten.contains("customer>"), "expected no path columns with no_flatten, got:\n{}", no_flatten);
-        assert!(no_flatten.contains(".customer"), "expected attachment syntax with no_flatten, got:\n{}", no_flatten);
+        assert!(
+            !no_flatten.contains("customer>"),
+            "expected no path columns with no_flatten, got:\n{}",
+            no_flatten
+        );
+        assert!(
+            no_flatten.contains(".customer"),
+            "expected attachment syntax with no_flatten, got:\n{}",
+            no_flatten
+        );
 
         // Both must round-trip (compare as Values to ignore key order).
         let decoded_on = crate::decode_generic(&with_flatten).expect("decode flatten-on failed");
@@ -830,32 +873,59 @@ mod tests {
     fn test_gt_field_edge_cases() {
         let cases: Vec<(&str, Value)> = vec![
             ("literal > key", json!([{">": 1}, {">": 2}])),
-            ("> at start", json!([{">foo": "a", "id": 1}, {">foo": "b", "id": 2}])),
-            ("> at end", json!([{"foo>": "a", "id": 1}, {"foo>": "b", "id": 2}])),
+            (
+                "> at start",
+                json!([{">foo": "a", "id": 1}, {">foo": "b", "id": 2}]),
+            ),
+            (
+                "> at end",
+                json!([{"foo>": "a", "id": 1}, {"foo>": "b", "id": 2}]),
+            ),
             ("double >>", json!([{"a>>b": "x"}, {"a>>b": "y"}])),
             ("multiple > in key", json!([{"a>b>c": "x"}, {"a>b>c": "y"}])),
-            ("> field with null", json!([{"a>b": null, "id": 1}, {"a>b": "hello", "id": 2}])),
-            ("> field with object", json!([
-                {"a>b": {"x": 1}, "id": 1},
-                {"a>b": {"x": 2}, "id": 2},
-            ])),
-            ("> field with array", json!([
-                {"a>b": [1, 2], "id": 1},
-                {"a>b": [3], "id": 2},
-            ])),
-            ("all fields have >", json!([{">": 1, "a>b": 2}, {">": 3, "a>b": 4}])),
-            ("mix of > literal and flattened", json!([
-                {"id": 1, "x>y": "lit", "nested": {"a": "v1", "b": "v2"}},
-                {"id": 2, "x>y": "lit2", "nested": {"a": "v3", "b": "v4"}},
-            ])),
-            ("> field absent in some rows", json!([
-                {"id": 1, "a>b": "present"},
-                {"id": 2},
-            ])),
-            ("key looks like flattened path", json!([
-                {"id": 1, "customer>name": "Alice"},
-                {"id": 2, "customer>name": "Bob"},
-            ])),
+            (
+                "> field with null",
+                json!([{"a>b": null, "id": 1}, {"a>b": "hello", "id": 2}]),
+            ),
+            (
+                "> field with object",
+                json!([
+                    {"a>b": {"x": 1}, "id": 1},
+                    {"a>b": {"x": 2}, "id": 2},
+                ]),
+            ),
+            (
+                "> field with array",
+                json!([
+                    {"a>b": [1, 2], "id": 1},
+                    {"a>b": [3], "id": 2},
+                ]),
+            ),
+            (
+                "all fields have >",
+                json!([{">": 1, "a>b": 2}, {">": 3, "a>b": 4}]),
+            ),
+            (
+                "mix of > literal and flattened",
+                json!([
+                    {"id": 1, "x>y": "lit", "nested": {"a": "v1", "b": "v2"}},
+                    {"id": 2, "x>y": "lit2", "nested": {"a": "v3", "b": "v4"}},
+                ]),
+            ),
+            (
+                "> field absent in some rows",
+                json!([
+                    {"id": 1, "a>b": "present"},
+                    {"id": 2},
+                ]),
+            ),
+            (
+                "key looks like flattened path",
+                json!([
+                    {"id": 1, "customer>name": "Alice"},
+                    {"id": 2, "customer>name": "Bob"},
+                ]),
+            ),
         ];
 
         for (name, data) in &cases {
@@ -863,7 +933,10 @@ mod tests {
                 let opts = GenericOptions { no_flatten };
                 let encoded = encode_generic_with_options(data, &opts);
                 let decoded = crate::decode_generic(&encoded).unwrap_or_else(|e| {
-                    panic!("{} (no_flatten={}): decode failed: {}\n  gcf: {:?}", name, no_flatten, e, encoded);
+                    panic!(
+                        "{} (no_flatten={}): decode failed: {}\n  gcf: {:?}",
+                        name, no_flatten, e, encoded
+                    );
                 });
                 assert_eq!(
                     data, &decoded,

@@ -127,14 +127,20 @@ fn run_parallel(
             let decoded = match decode_generic(&encoded) {
                 Ok(d) => d,
                 Err(e) => {
-                    eprintln!("\nFAIL {name} seed={} no_flatten={no_flatten}: decode error: {e}", i + seed_offset);
+                    eprintln!(
+                        "\nFAIL {name} seed={} no_flatten={no_flatten}: decode error: {e}",
+                        i + seed_offset
+                    );
                     failed.fetch_add(1, Ordering::Relaxed);
                     return;
                 }
             };
 
             if !values_equal(&data, &decoded) {
-                eprintln!("\nFAIL {name} seed={} no_flatten={no_flatten}: mismatch", i + seed_offset);
+                eprintln!(
+                    "\nFAIL {name} seed={} no_flatten={no_flatten}: mismatch",
+                    i + seed_offset
+                );
                 failed.fetch_add(1, Ordering::Relaxed);
                 return;
             }
