@@ -1,8 +1,8 @@
 [package]
 name = "gcf"
-version = "2.1.1"
+version = "2.2.0"
 edition = "2021"
-description = "GCF (Graph Compact Format): Token-efficient wire format for LLM tool interactions. 53-71% fewer tokens than JSON. 100% comprehension on every frontier model."
+description = "The AI-native wire format for structured data. 50-92% fewer tokens than JSON. 100% comprehension on every frontier model. Zero dependencies (except serde)."
 license = "MIT"
 repository = "https://github.com/blackwell-systems/gcf-rust"
 homepage = "https://gcformat.com/"
