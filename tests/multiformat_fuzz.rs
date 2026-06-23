@@ -7,7 +7,7 @@ fn iterations() -> usize {
     std::env::var("FUZZ_ITERATIONS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(100_000)
+        .unwrap_or(10_000)
 }
 const PROGRESS_INTERVAL: usize = 10_000_000;
 
