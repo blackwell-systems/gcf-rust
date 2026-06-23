@@ -358,6 +358,77 @@ fn parse_tabular_body(
     parse_tabular_body_with_shared(lines, start, depth, fields, expected_count, None)
 }
 
+/// Unflatten path columns into nested objects.
+fn unflatten_paths(
+    path_columns: &std::collections::HashMap<String, Vec<String>>,
+    flat_values: &std::collections::HashMap<String, Value>,
+    flat_absent: &std::collections::HashSet<String>,
+) -> Map<String, Value> {
+    // Group by top-level parent.
+    let mut groups: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    let mut group_order: Vec<String> = Vec::new();
+    for (field_name, paths) in path_columns {
+        if paths.is_empty() {
+            continue;
+        }
+        let top = &paths[0];
+        if !groups.contains_key(top) {
+            group_order.push(top.clone());
+            groups.insert(top.clone(), Vec::new());
+        }
+        groups.get_mut(top).unwrap().push(field_name.clone());
+    }
+
+    let mut result = Map::new();
+
+    for top in &group_order {
+        let field_names = &groups[top];
+        let all_absent = field_names.iter().all(|f| flat_absent.contains(f));
+        let all_null = field_names.iter().all(|f| {
+            if flat_absent.contains(f) {
+                return false; // absent is not null
+            }
+            match flat_values.get(f) {
+                Some(Value::Null) | None => true,
+                _ => false,
+            }
+        });
+
+        if all_absent {
+            continue; // omit parent key
+        }
+        if all_null {
+            result.insert(top.clone(), Value::Null);
+            continue;
+        }
+
+        // Build nested structure.
+        for field_name in field_names {
+            if flat_absent.contains(field_name) {
+                continue;
+            }
+            let paths = &path_columns[field_name];
+            let val = flat_values.get(field_name).cloned().unwrap_or(Value::Null);
+
+            let mut current = &mut result;
+            for k in &paths[..paths.len() - 1] {
+                if !current.contains_key(k) {
+                    current.insert(k.clone(), Value::Object(Map::new()));
+                }
+                current = current
+                    .get_mut(k)
+                    .unwrap()
+                    .as_object_mut()
+                    .unwrap();
+            }
+            current.insert(paths.last().unwrap().clone(), val);
+        }
+    }
+
+    result
+}
+
 /// v3 tabular body parser with inline schemas, no-indent attachments, and shared array schemas.
 fn parse_tabular_body_with_shared(
     lines: &[String],
@@ -370,6 +441,15 @@ fn parse_tabular_body_with_shared(
     let ind = "  ".repeat(depth);
     let mut rows: Vec<Value> = Vec::new();
     let mut i = start;
+
+    // Detect path columns: fields containing ">".
+    let mut path_column_map: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for f in fields {
+        if f.contains('>') {
+            path_column_map.insert(f.clone(), f.split('>').map(|s| s.to_string()).collect());
+        }
+    }
 
     // Track inline schemas declared by ^{fields}.
     let mut inline_schemas: std::collections::HashMap<String, Vec<String>> =
@@ -432,8 +512,28 @@ fn parse_tabular_body_with_shared(
         let mut inline_att_fields: Vec<String> = Vec::new();
         let mut inline_att_order: Vec<String> = Vec::new();
 
+        // Collect path column values for unflattening.
+        let mut flat_values: std::collections::HashMap<String, Value> =
+            std::collections::HashMap::new();
+        let mut flat_absent: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+
         for (j, f) in fields.iter().enumerate() {
             let cell_val = &vals[j];
+
+            // Path columns: store values for later unflattening.
+            if path_column_map.contains_key(f) {
+                let parsed = parse_scalar(cell_val, true)?;
+                match parsed {
+                    ScalarValue::Missing => {
+                        flat_absent.insert(f.clone());
+                    }
+                    _ => {
+                        flat_values.insert(f.clone(), scalar_to_value(&parsed)?);
+                    }
+                }
+                continue;
+            }
 
             // Check for ^{fields} inline schema declaration.
             if cell_val.starts_with("^{") && cell_val.ends_with('}') {
@@ -647,6 +747,14 @@ fn parse_tabular_body_with_shared(
                         return Err(format!("duplicate_attachment: {}", extra_name));
                     }
                 }
+            }
+        }
+
+        // Unflatten path columns into nested objects.
+        if !path_column_map.is_empty() {
+            let nested = unflatten_paths(&path_column_map, &flat_values, &flat_absent);
+            for (k, v) in nested {
+                row.insert(k, v);
             }
         }
 

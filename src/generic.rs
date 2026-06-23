@@ -197,6 +197,180 @@ fn shared_array_schema(arr: &[Value], field_name: &str) -> Option<Vec<String>> {
     canonical_fields
 }
 
+/// A flattened leaf column produced by analyzing a nested object.
+struct FlatLeaf {
+    path: String,      // ">" separated path (e.g. "customer>name")
+    keys: Vec<String>, // key chain to traverse from row object
+}
+
+/// Analyze whether a field across all rows contains a fixed-shape nested object
+/// that can be flattened. Returns leaf descriptors if flattenable, None otherwise.
+fn analyze_flattenable(arr: &[Value], field_name: &str, parent_path: &str) -> Option<Vec<FlatLeaf>> {
+    let mut canonical_keys: Option<Vec<String>> = None;
+    let mut canonical_shape: std::collections::HashMap<String, &'static str> =
+        std::collections::HashMap::new();
+
+    for item in arr {
+        let map = item.as_object()?;
+        let v = match map.get(field_name) {
+            None | Some(Value::Null) => continue,
+            Some(v) => v,
+        };
+        let obj = v.as_object()?; // Not an object? Bail.
+        if v.is_array() {
+            return None;
+        }
+
+        let keys: Vec<String> = obj.keys().cloned().collect();
+        if let Some(ref ck) = canonical_keys {
+            if keys != *ck {
+                return None;
+            }
+            // Verify shape consistency.
+            for k in &keys {
+                let val = &obj[k];
+                let expected = canonical_shape.get(k.as_str())?;
+                match *expected {
+                    "scalar" => {
+                        if val.is_object() || val.is_array() {
+                            return None;
+                        }
+                    }
+                    "nested" => {
+                        if val.is_array() {
+                            return None;
+                        }
+                        if !val.is_null() && !val.is_object() {
+                            return None;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        } else {
+            for k in &keys {
+                if k.contains('>') {
+                    return None;
+                }
+                let val = &obj[k];
+                if val.is_array() {
+                    return None;
+                }
+                let kind = if val.is_object() { "nested" } else { "scalar" };
+                canonical_shape.insert(k.clone(), kind);
+            }
+            canonical_keys = Some(keys);
+        }
+    }
+
+    let ck = canonical_keys?;
+    let current_path = if parent_path.is_empty() {
+        field_name.to_string()
+    } else {
+        format!("{}>{}", parent_path, field_name)
+    };
+
+    let parent_keys: Vec<String> = if parent_path.is_empty() {
+        vec![field_name.to_string()]
+    } else {
+        let mut pk: Vec<String> = parent_path.split('>').map(|s| s.to_string()).collect();
+        pk.push(field_name.to_string());
+        pk
+    };
+
+    let mut leaves = Vec::new();
+    for k in &ck {
+        let kind = canonical_shape.get(k.as_str()).copied().unwrap_or("scalar");
+        if kind == "scalar" {
+            let mut keys = parent_keys.clone();
+            keys.push(k.clone());
+            leaves.push(FlatLeaf {
+                path: format!("{}>{}", current_path, k),
+                keys,
+            });
+        } else {
+            // Nested: extract sub-objects and recurse.
+            let sub_arr: Vec<Value> = arr
+                .iter()
+                .map(|item| {
+                    item.as_object()
+                        .and_then(|m| m.get(field_name))
+                        .and_then(|v| {
+                            if v.is_null() {
+                                None
+                            } else {
+                                Some(v.clone())
+                            }
+                        })
+                        .unwrap_or(Value::Object(serde_json::Map::new()))
+                })
+                .collect();
+            let sub_leaves = analyze_flattenable(&sub_arr, k, &current_path)?;
+            if sub_leaves.is_empty() {
+                return None; // Empty nested object cannot be represented by flattening.
+            }
+            leaves.extend(sub_leaves);
+        }
+    }
+
+    // Guard: reject if any row has non-null object with all-null leaves (ambiguous with null parent).
+    if !leaves.is_empty() {
+        for item in arr {
+            let map = match item.as_object() {
+                Some(m) => m,
+                None => continue,
+            };
+            let v = match map.get(field_name) {
+                None | Some(Value::Null) => continue,
+                Some(v) => v,
+            };
+            if !v.is_object() {
+                continue;
+            }
+            let all_null = leaves.iter().all(|leaf| {
+                resolve_key_chain(item, &leaf.keys)
+                    .map(|val| val.is_null())
+                    .unwrap_or(false)
+            });
+            if all_null {
+                return None;
+            }
+        }
+    }
+
+    Some(leaves)
+}
+
+/// Traverse an object following a key chain, returning the leaf value.
+fn resolve_key_chain(item: &Value, keys: &[String]) -> Option<Value> {
+    if keys.is_empty() {
+        return None;
+    }
+    let mut current = item.as_object()?.get(&keys[0])?.clone();
+    for k in &keys[1..] {
+        current = current.as_object()?.get(k)?.clone();
+    }
+    Some(current)
+}
+
+/// Check if the top-level key exists in the item.
+fn key_exists(item: &Value, key: &str) -> bool {
+    item.as_object().map_or(false, |m| m.contains_key(key))
+}
+
+/// A column in the expanded (flattened) field list.
+struct FlatColumn {
+    header_name: String,
+    col_type: FlatColType,
+    field: String,
+    keys: Vec<String>,
+}
+
+enum FlatColType {
+    Flat,
+    Original,
+}
+
 fn encode_tabular(
     header_prefix: &str,
     arr: &[Value],
@@ -206,12 +380,48 @@ fn encode_tabular(
 ) {
     let prefix = indent(depth);
 
-    // Pre-compute inline schemas and shared array schemas.
+    // Phase 0: Analyze fields for flattening.
+    let mut flatten_map: std::collections::HashMap<String, Vec<FlatLeaf>> =
+        std::collections::HashMap::new();
+    for f in fields {
+        if let Some(leaves) = analyze_flattenable(arr, f, "") {
+            if !leaves.is_empty() {
+                flatten_map.insert(f.clone(), leaves);
+            }
+        }
+    }
+
+    // Build expanded column list.
+    let mut columns: Vec<FlatColumn> = Vec::new();
+    for f in fields {
+        if let Some(leaves) = flatten_map.get(f) {
+            for leaf in leaves {
+                columns.push(FlatColumn {
+                    header_name: format_key(&leaf.path),
+                    col_type: FlatColType::Flat,
+                    field: f.clone(),
+                    keys: leaf.keys.clone(),
+                });
+            }
+        } else {
+            columns.push(FlatColumn {
+                header_name: format_key(f),
+                col_type: FlatColType::Original,
+                field: f.clone(),
+                keys: Vec::new(),
+            });
+        }
+    }
+
+    // Pre-compute inline schemas and shared array schemas (skip flattened fields).
     let mut inline_schemas: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
     let mut shared_arr_schemas: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
     for f in fields {
+        if flatten_map.contains_key(f) {
+            continue;
+        }
         if let Some(ifs) = inline_schema_fields(arr, f) {
             inline_schemas.insert(f.clone(), ifs);
         }
@@ -220,12 +430,12 @@ fn encode_tabular(
         }
     }
 
-    let fmt_fields: Vec<String> = fields.iter().map(|f| format_key(f)).collect();
+    let header_fields: Vec<&str> = columns.iter().map(|c| c.header_name.as_str()).collect();
     out.push_str(&format!(
         "{}[{}]{{{}}}\n",
         header_prefix,
         arr.len(),
-        fmt_fields.join(",")
+        header_fields.join(",")
     ));
 
     for (i, item) in arr.iter().enumerate() {
@@ -244,8 +454,32 @@ fn encode_tabular(
         let mut attachments: Vec<Att> = Vec::new();
         let mut row_has_attachment = false;
 
-        for f in fields {
-            match map.get(f) {
+        for col in &columns {
+            match col.col_type {
+                FlatColType::Flat => {
+                    // Resolve value via key chain.
+                    if !key_exists(item, &col.keys[0]) {
+                        cells.push("~".to_string());
+                    } else {
+                        // Check if the top-level field itself is null.
+                        let top_val = item.as_object().and_then(|m| m.get(&col.keys[0]));
+                        if top_val == Some(&Value::Null) {
+                            cells.push("-".to_string());
+                        } else {
+                            match resolve_key_chain(item, &col.keys) {
+                                None => cells.push("~".to_string()),
+                                Some(Value::Null) => cells.push("-".to_string()),
+                                Some(v) => cells.push(format_scalar(&v, '|')),
+                            }
+                        }
+                    }
+                    continue;
+                }
+                FlatColType::Original => {}
+            }
+
+            let f = &col.field;
+            match map.get(f.as_str()) {
                 None => cells.push("~".to_string()),
                 Some(Value::Null) => cells.push("-".to_string()),
                 Some(v) if v.is_object() || v.is_array() => {
