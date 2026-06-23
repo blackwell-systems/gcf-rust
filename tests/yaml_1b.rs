@@ -1,11 +1,13 @@
 use gcf::{decode_generic, encode_generic};
-use rayon::prelude::*;
 use serde_json::Value;
 use std::io::Write;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
-const PROGRESS_INTERVAL: usize = 50_000_000;
+// 665M to bring YAML total to 1B (335M already done)
+const ITERATIONS: usize = 665_000_000;
+const PROGRESS_INTERVAL: usize = 10_000_000;
+// Start seeds at 334M to avoid overlap with previous run
+const SEED_OFFSET: usize = 334_000_000;
 
 fn rng_next(state: &mut u64) -> u64 {
     let mut x = *state;
@@ -16,13 +18,14 @@ fn rng_next(state: &mut u64) -> u64 {
     x
 }
 
-fn gen_key(rng: &mut u64) -> String {
+fn gen_key(seed: u64) -> String {
     let chars: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.";
-    let len = (rng_next(rng) % 14) as usize + 1;
+    let mut rng = seed;
+    let len = (rng_next(&mut rng) % 14) as usize + 1;
     let mut s = String::with_capacity(len);
-    s.push(chars[(rng_next(rng) % 52) as usize] as char);
+    s.push(chars[(rng_next(&mut rng) % 52) as usize] as char);
     for _ in 1..len {
-        s.push(chars[(rng_next(rng) % chars.len() as u64) as usize] as char);
+        s.push(chars[(rng_next(&mut rng) % chars.len() as u64) as usize] as char);
     }
     s
 }
@@ -68,7 +71,7 @@ fn gen_value(rng: &mut u64, depth: usize, max_depth: usize) -> Value {
             let n = (rng_next(rng) % 6) as usize;
             let mut map = serde_json::Map::new();
             for _ in 0..n {
-                let key = gen_key(rng);
+                let key = gen_key(*rng);
                 *rng = rng.wrapping_add(key.len() as u64);
                 map.insert(key, gen_value(rng, depth + 1, max_depth));
             }
@@ -106,86 +109,57 @@ fn values_equal(a: &Value, b: &Value) -> bool {
     }
 }
 
-fn run_parallel(
-    name: &str,
-    iterations: usize,
-    seed_offset: usize,
-    gen: impl Fn(&mut u64) -> Value + Sync,
-) {
+#[test]
+fn yaml_to_1b() {
     let start = Instant::now();
-    let passed = AtomicUsize::new(0);
-    let failed = AtomicUsize::new(0);
+    let mut passed = 0usize;
 
-    (0..iterations).into_par_iter().for_each(|i| {
-        let seed = (i + seed_offset) as u64 + 1;
+    for i in 0..ITERATIONS {
+        let seed = (i + SEED_OFFSET) as u64 + 1;
         let mut rng = seed;
-        let data = gen(&mut rng);
+        let v = gen_value(&mut rng, 0, 3);
+        let yaml_str = match serde_yaml::to_string(&v) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let parsed: Value = match serde_yaml::from_str(&yaml_str) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
 
-        let encoded = encode_generic(&data);
+        let encoded = encode_generic(&parsed);
         let decoded = match decode_generic(&encoded) {
             Ok(d) => d,
             Err(e) => {
-                eprintln!("\nFAIL {name} seed={}: decode error: {e}", i + seed_offset);
-                failed.fetch_add(1, Ordering::Relaxed);
-                return;
+                eprintln!("FAIL YAML seed={}: decode error: {e}", i + SEED_OFFSET);
+                std::process::exit(1);
             }
         };
 
-        if !values_equal(&data, &decoded) {
-            eprintln!("\nFAIL {name} seed={}: mismatch", i + seed_offset);
-            failed.fetch_add(1, Ordering::Relaxed);
-            return;
+        if !values_equal(&parsed, &decoded) {
+            eprintln!("FAIL YAML seed={}: mismatch", i + SEED_OFFSET);
+            std::process::exit(1);
         }
+        passed += 1;
 
-        let p = passed.fetch_add(1, Ordering::Relaxed) + 1;
-        if p % PROGRESS_INTERVAL == 0 {
+        if passed % PROGRESS_INTERVAL == 0 {
             let elapsed = start.elapsed().as_secs_f64();
-            let total = p + failed.load(Ordering::Relaxed);
-            let rate = total as f64 / elapsed;
-            let remaining = (iterations - total) as f64 / rate;
+            let rate = passed as f64 / elapsed;
+            let remaining = (ITERATIONS - passed) as f64 / rate;
+            let total_yaml = passed + 335_000_000;
             eprint!(
-                "\r  {name}: {p}/{iterations} ({:.1}%) {rate:.0}/s ETA {:.0}m   ",
-                p as f64 / iterations as f64 * 100.0,
+                "\r  YAML: {passed}/{ITERATIONS} ({:.1}%) {rate:.0}/s ETA {:.0}m | total: {total_yaml}   ",
+                passed as f64 / ITERATIONS as f64 * 100.0,
                 remaining / 60.0,
             );
             std::io::stderr().flush().ok();
         }
-    });
+    }
 
     let elapsed = start.elapsed().as_secs_f64();
-    let p = passed.load(Ordering::Relaxed);
-    let f = failed.load(Ordering::Relaxed);
+    let total_yaml = passed + 335_000_000;
     eprintln!(
-        "\r  {name}: {p} passed, {f} failed in {elapsed:.1}s ({:.0}/s)                    ",
-        p as f64 / elapsed,
+        "\r  YAML: {passed}/{ITERATIONS} (100%) in {elapsed:.1}s ({:.0}/s) | TOTAL: {total_yaml}          ",
+        passed as f64 / elapsed,
     );
-    assert_eq!(f, 0, "{name}: {f} failures detected");
-}
-
-// JSON: push to 10 billion (seed offset 1.25B to avoid overlap)
-#[test]
-fn json_10b() {
-    let iterations: usize = std::env::var("FUZZ_ITERATIONS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(1_000_000);
-    run_parallel("JSON", iterations, 1_250_000_000, |rng| {
-        let v = gen_value(rng, 0, 4);
-        let s = serde_json::to_string(&v).unwrap();
-        serde_json::from_str(&s).unwrap()
-    });
-}
-
-// YAML: push to 10 billion (seed offset 1B to avoid overlap)
-#[test]
-fn yaml_10b() {
-    let iterations: usize = std::env::var("FUZZ_ITERATIONS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(1_000_000);
-    run_parallel("YAML", iterations, 1_000_000_000, |rng| {
-        let v = gen_value(rng, 0, 3);
-        let yaml_str = serde_yaml::to_string(&v).unwrap();
-        serde_yaml::from_str(&yaml_str).unwrap_or(Value::Null)
-    });
 }

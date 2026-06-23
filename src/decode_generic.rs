@@ -413,11 +413,7 @@ fn unflatten_paths(
                 if !current.contains_key(k) {
                     current.insert(k.clone(), Value::Object(Map::new()));
                 }
-                current = current
-                    .get_mut(k)
-                    .unwrap()
-                    .as_object_mut()
-                    .unwrap();
+                current = current.get_mut(k).unwrap().as_object_mut().unwrap();
             }
             current.insert(paths.last().unwrap().clone(), val);
         }
@@ -512,8 +508,7 @@ fn parse_tabular_body_with_shared(
         // Collect path column values for unflattening.
         let mut flat_values: std::collections::HashMap<String, Value> =
             std::collections::HashMap::new();
-        let mut flat_absent: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+        let mut flat_absent: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         for (j, f) in fields.iter().enumerate() {
             let cell_val = &vals[j];

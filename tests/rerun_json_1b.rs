@@ -5,7 +5,11 @@ use std::io::Write;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
+// 1B JSON to replace unlogged Go fuzz claim
+// Seed offset 11.25B to avoid all prior runs
+const ITERATIONS: usize = 1_000_000_000;
 const PROGRESS_INTERVAL: usize = 50_000_000;
+const SEED_OFFSET: usize = 11_250_000_000;
 
 fn rng_next(state: &mut u64) -> u64 {
     let mut x = *state;
@@ -45,12 +49,9 @@ fn gen_scalar(rng: &mut u64) -> Value {
         2 => Value::Number(serde_json::Number::from(
             (rng_next(rng) % 200001) as i64 - 100000,
         )),
-        3 => {
-            let f = ((rng_next(rng) % 200000) as f64 - 100000.0) / 100.0;
-            serde_json::Number::from_f64(f)
-                .map(Value::Number)
-                .unwrap_or(Value::Null)
-        }
+        3 => serde_json::Number::from_f64(((rng_next(rng) % 200000) as f64 - 100000.0) / 100.0)
+            .map(Value::Number)
+            .unwrap_or(Value::Null),
         _ => Value::String(gen_string(rng)),
     }
 }
@@ -106,33 +107,31 @@ fn values_equal(a: &Value, b: &Value) -> bool {
     }
 }
 
-fn run_parallel(
-    name: &str,
-    iterations: usize,
-    seed_offset: usize,
-    gen: impl Fn(&mut u64) -> Value + Sync,
-) {
+#[test]
+fn rerun_json_1b_extra() {
     let start = Instant::now();
     let passed = AtomicUsize::new(0);
     let failed = AtomicUsize::new(0);
 
-    (0..iterations).into_par_iter().for_each(|i| {
-        let seed = (i + seed_offset) as u64 + 1;
+    (0..ITERATIONS).into_par_iter().for_each(|i| {
+        let seed = (i + SEED_OFFSET) as u64 + 1;
         let mut rng = seed;
-        let data = gen(&mut rng);
+        let v = gen_value(&mut rng, 0, 4);
+        let s = serde_json::to_string(&v).unwrap();
+        let data: Value = serde_json::from_str(&s).unwrap();
 
         let encoded = encode_generic(&data);
         let decoded = match decode_generic(&encoded) {
             Ok(d) => d,
             Err(e) => {
-                eprintln!("\nFAIL {name} seed={}: decode error: {e}", i + seed_offset);
+                eprintln!("\nFAIL JSON seed={}: decode error: {e}", i + SEED_OFFSET);
                 failed.fetch_add(1, Ordering::Relaxed);
                 return;
             }
         };
 
         if !values_equal(&data, &decoded) {
-            eprintln!("\nFAIL {name} seed={}: mismatch", i + seed_offset);
+            eprintln!("\nFAIL JSON seed={}: mismatch", i + SEED_OFFSET);
             failed.fetch_add(1, Ordering::Relaxed);
             return;
         }
@@ -142,10 +141,10 @@ fn run_parallel(
             let elapsed = start.elapsed().as_secs_f64();
             let total = p + failed.load(Ordering::Relaxed);
             let rate = total as f64 / elapsed;
-            let remaining = (iterations - total) as f64 / rate;
+            let remaining = (ITERATIONS - total) as f64 / rate;
             eprint!(
-                "\r  {name}: {p}/{iterations} ({:.1}%) {rate:.0}/s ETA {:.0}m   ",
-                p as f64 / iterations as f64 * 100.0,
+                "\r  JSON-1B-extra: {p}/{ITERATIONS} ({:.1}%) {rate:.0}/s ETA {:.0}m   ",
+                p as f64 / ITERATIONS as f64 * 100.0,
                 remaining / 60.0,
             );
             std::io::stderr().flush().ok();
@@ -156,36 +155,8 @@ fn run_parallel(
     let p = passed.load(Ordering::Relaxed);
     let f = failed.load(Ordering::Relaxed);
     eprintln!(
-        "\r  {name}: {p} passed, {f} failed in {elapsed:.1}s ({:.0}/s)                    ",
+        "\r  JSON-1B-extra: {p} passed, {f} failed in {elapsed:.1}s ({:.0}/s)                    ",
         p as f64 / elapsed,
     );
-    assert_eq!(f, 0, "{name}: {f} failures detected");
-}
-
-// JSON: push to 10 billion (seed offset 1.25B to avoid overlap)
-#[test]
-fn json_10b() {
-    let iterations: usize = std::env::var("FUZZ_ITERATIONS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(1_000_000);
-    run_parallel("JSON", iterations, 1_250_000_000, |rng| {
-        let v = gen_value(rng, 0, 4);
-        let s = serde_json::to_string(&v).unwrap();
-        serde_json::from_str(&s).unwrap()
-    });
-}
-
-// YAML: push to 10 billion (seed offset 1B to avoid overlap)
-#[test]
-fn yaml_10b() {
-    let iterations: usize = std::env::var("FUZZ_ITERATIONS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(1_000_000);
-    run_parallel("YAML", iterations, 1_000_000_000, |rng| {
-        let v = gen_value(rng, 0, 3);
-        let yaml_str = serde_yaml::to_string(&v).unwrap();
-        serde_yaml::from_str(&yaml_str).unwrap_or(Value::Null)
-    });
+    assert_eq!(f, 0, "JSON: {f} failures detected");
 }

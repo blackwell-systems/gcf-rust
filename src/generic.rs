@@ -205,7 +205,11 @@ struct FlatLeaf {
 
 /// Analyze whether a field across all rows contains a fixed-shape nested object
 /// that can be flattened. Returns leaf descriptors if flattenable, None otherwise.
-fn analyze_flattenable(arr: &[Value], field_name: &str, parent_path: &str) -> Option<Vec<FlatLeaf>> {
+fn analyze_flattenable(
+    arr: &[Value],
+    field_name: &str,
+    parent_path: &str,
+) -> Option<Vec<FlatLeaf>> {
     let mut canonical_keys: Option<Vec<String>> = None;
     let mut canonical_shape: std::collections::HashMap<String, &'static str> =
         std::collections::HashMap::new();
@@ -295,13 +299,7 @@ fn analyze_flattenable(arr: &[Value], field_name: &str, parent_path: &str) -> Op
                 .map(|item| {
                     item.as_object()
                         .and_then(|m| m.get(field_name))
-                        .and_then(|v| {
-                            if v.is_null() {
-                                None
-                            } else {
-                                Some(v.clone())
-                            }
-                        })
+                        .and_then(|v| if v.is_null() { None } else { Some(v.clone()) })
                         .unwrap_or(Value::Object(serde_json::Map::new()))
                 })
                 .collect();

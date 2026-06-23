@@ -5,6 +5,7 @@ use std::io::Write;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
+const ITERATIONS: usize = 250_000_000;
 const PROGRESS_INTERVAL: usize = 50_000_000;
 
 fn rng_next(state: &mut u64) -> u64 {
@@ -45,12 +46,9 @@ fn gen_scalar(rng: &mut u64) -> Value {
         2 => Value::Number(serde_json::Number::from(
             (rng_next(rng) % 200001) as i64 - 100000,
         )),
-        3 => {
-            let f = ((rng_next(rng) % 200000) as f64 - 100000.0) / 100.0;
-            serde_json::Number::from_f64(f)
-                .map(Value::Number)
-                .unwrap_or(Value::Null)
-        }
+        3 => serde_json::Number::from_f64(((rng_next(rng) % 200000) as f64 - 100000.0) / 100.0)
+            .map(Value::Number)
+            .unwrap_or(Value::Null),
         _ => Value::String(gen_string(rng)),
     }
 }
@@ -162,30 +160,22 @@ fn run_parallel(
     assert_eq!(f, 0, "{name}: {f} failures detected");
 }
 
-// JSON: push to 10 billion (seed offset 1.25B to avoid overlap)
+// Rerun JSON 250M (seeds 0-250M, matching original run 1)
 #[test]
-fn json_10b() {
-    let iterations: usize = std::env::var("FUZZ_ITERATIONS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(1_000_000);
-    run_parallel("JSON", iterations, 1_250_000_000, |rng| {
+fn rerun_json_250m() {
+    run_parallel("JSON-rerun", ITERATIONS, 0, |rng| {
         let v = gen_value(rng, 0, 4);
         let s = serde_json::to_string(&v).unwrap();
         serde_json::from_str(&s).unwrap()
     });
 }
 
-// YAML: push to 10 billion (seed offset 1B to avoid overlap)
+// Rerun MessagePack 250M (seeds 0-250M, matching original run 1)
 #[test]
-fn yaml_10b() {
-    let iterations: usize = std::env::var("FUZZ_ITERATIONS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(1_000_000);
-    run_parallel("YAML", iterations, 1_000_000_000, |rng| {
-        let v = gen_value(rng, 0, 3);
-        let yaml_str = serde_yaml::to_string(&v).unwrap();
-        serde_yaml::from_str(&yaml_str).unwrap_or(Value::Null)
+fn rerun_msgpack_250m() {
+    run_parallel("MessagePack-rerun", ITERATIONS, 0, |rng| {
+        let v = gen_value(rng, 0, 4);
+        let packed = rmp_serde::to_vec(&v).unwrap();
+        rmp_serde::from_slice(&packed).unwrap_or(Value::Null)
     });
 }

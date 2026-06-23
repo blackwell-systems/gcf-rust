@@ -24,7 +24,8 @@ fn gen_key(seed: u64) -> String {
 }
 
 fn gen_string(rng: &mut u64) -> String {
-    let chars: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 _-.,;:/?&=~";
+    let chars: &[u8] =
+        b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 _-.,;:/?&=~";
     let len = (rng_next(rng) % 20) as usize;
     let mut s = String::with_capacity(len);
     for _ in 0..len {
@@ -47,7 +48,9 @@ fn gen_scalar(rng: &mut u64) -> Value {
     match rng_next(rng) % 6 {
         0 => Value::Null,
         1 => Value::Bool(rng_next(rng) % 2 == 0),
-        2 => Value::Number(serde_json::Number::from((rng_next(rng) % 200001) as i64 - 100000)),
+        2 => Value::Number(serde_json::Number::from(
+            (rng_next(rng) % 200001) as i64 - 100000,
+        )),
         3 => {
             let f = ((rng_next(rng) % 200000) as f64 - 100000.0) / 100.0;
             serde_json::Number::from_f64(f)
@@ -133,7 +136,8 @@ fn values_equal(a: &Value, b: &Value) -> bool {
             if a.len() != b.len() {
                 return false;
             }
-            a.iter().all(|(k, v)| b.get(k).map_or(false, |bv| values_equal(v, bv)))
+            a.iter()
+                .all(|(k, v)| b.get(k).map_or(false, |bv| values_equal(v, bv)))
         }
         _ => false,
     }
@@ -226,7 +230,12 @@ fn multiformat_csv() {
         }
 
         let mut rdr = csv::Reader::from_reader(&buf[..]);
-        let headers: Vec<String> = rdr.headers().unwrap().iter().map(|s| s.to_string()).collect();
+        let headers: Vec<String> = rdr
+            .headers()
+            .unwrap()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         let mut rows = Vec::new();
         for result in rdr.records() {
             let record = result.unwrap();
