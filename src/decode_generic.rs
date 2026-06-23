@@ -389,10 +389,7 @@ fn unflatten_paths(
             if flat_absent.contains(f) {
                 return false; // absent is not null
             }
-            match flat_values.get(f) {
-                Some(Value::Null) | None => true,
-                _ => false,
-            }
+            matches!(flat_values.get(f), Some(Value::Null) | None)
         });
 
         if all_absent {
