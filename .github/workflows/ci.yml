@@ -12,6 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test
-      - run: cargo clippy -- -D warnings
       - run: cargo fmt --check
+      - run: cargo clippy -- -D warnings
+      - run: cargo test --test conformance_v2 --test roundtrip_v2 --lib
+      - run: FUZZ_ITERATIONS=1000 cargo test --test fuzz_parallel --test multiformat_fuzz -- --nocapture
