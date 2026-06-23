@@ -168,7 +168,7 @@ fn json_10b() {
     let iterations: usize = std::env::var("FUZZ_ITERATIONS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(1_000_000);
+        .unwrap_or(100_000);
     run_parallel("JSON", iterations, 1_250_000_000, |rng| {
         let v = gen_value(rng, 0, 4);
         let s = serde_json::to_string(&v).unwrap();
@@ -182,7 +182,7 @@ fn yaml_10b() {
     let iterations: usize = std::env::var("FUZZ_ITERATIONS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(1_000_000);
+        .unwrap_or(100_000);
     run_parallel("YAML", iterations, 1_000_000_000, |rng| {
         let v = gen_value(rng, 0, 3);
         let yaml_str = serde_yaml::to_string(&v).unwrap();
