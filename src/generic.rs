@@ -254,7 +254,17 @@ fn analyze_flattenable(
     for item in arr {
         let map = item.as_object()?;
         let v = match map.get(field_name) {
-            None | Some(Value::Null) => continue,
+            None => continue,
+            // A nested (non-top-level) null cannot be flattened losslessly: its leaves
+            // would encode as absent ("~") and unflatten back to a missing key, not null.
+            // Bail to the attachment path. A top-level null is fine (emits "-" and
+            // reconstructs via the all-null rule), so just skip the row from shape analysis.
+            Some(Value::Null) => {
+                if !parent_path.is_empty() {
+                    return None;
+                }
+                continue;
+            }
             Some(v) => v,
         };
         let obj = v.as_object()?; // Not an object? Bail.

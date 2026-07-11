@@ -171,6 +171,122 @@ fn structural_equal(a: &Value, b: &Value) -> bool {
     }
 }
 
+// A fixed nested schema: a scalar leaf or an ordered set of named sub-shapes.
+enum FlatShape {
+    Scalar,
+    Nested(Vec<(String, FlatShape)>),
+}
+
+fn gen_flat_shape(rng: &mut Rng, depth: usize, max_depth: usize) -> FlatShape {
+    if depth >= max_depth || rng.float() < 0.45 {
+        return FlatShape::Scalar;
+    }
+    let mut sub = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for _ in 0..1 + rng.int(3) as usize {
+        let k = gen_bare_key(rng);
+        if seen.insert(k.clone()) {
+            sub.push((k, gen_flat_shape(rng, depth + 1, max_depth)));
+        }
+    }
+    if sub.is_empty() {
+        FlatShape::Scalar
+    } else {
+        FlatShape::Nested(sub)
+    }
+}
+
+fn materialize_flat_shape(rng: &mut Rng, shape: &FlatShape) -> Value {
+    match shape {
+        FlatShape::Scalar => gen_scalar(rng),
+        FlatShape::Nested(sub) => {
+            let mut map = serde_json::Map::new();
+            for (k, s) in sub {
+                // A nested sub-object is sometimes null (intermediate null — the case the
+                // pre-fix encoder dropped) instead of a full object.
+                let v = if !matches!(s, FlatShape::Scalar) && rng.float() < 0.3 {
+                    Value::Null
+                } else {
+                    materialize_flat_shape(rng, s)
+                };
+                map.insert(k.clone(), v);
+            }
+            Value::Object(map)
+        }
+    }
+}
+
+fn gen_flattenable_array(rng: &mut Rng) -> Value {
+    let mut schema: Vec<(String, FlatShape)> = vec![("id".to_string(), FlatShape::Scalar)];
+    let mut seen = std::collections::HashSet::new();
+    seen.insert("id".to_string());
+    let mut has_nested = false;
+    for _ in 0..1 + rng.int(3) as usize {
+        let k = gen_bare_key(rng);
+        if !seen.insert(k.clone()) {
+            continue;
+        }
+        let s = gen_flat_shape(rng, 1, 3);
+        if !matches!(s, FlatShape::Scalar) {
+            has_nested = true;
+        }
+        schema.push((k, s));
+    }
+    if !has_nested {
+        let k = gen_bare_key(rng);
+        let inner = FlatShape::Nested(vec![(
+            gen_bare_key(rng),
+            FlatShape::Nested(vec![(gen_bare_key(rng), FlatShape::Scalar)]),
+        )]);
+        schema.push((k, inner));
+    }
+    let rows = 2 + rng.int(6) as usize;
+    let mut arr = Vec::with_capacity(rows);
+    for _ in 0..rows {
+        let mut row = serde_json::Map::new();
+        for (f, s) in &schema {
+            let x = rng.float();
+            if x < 0.12 {
+                continue; // field absent this row
+            } else if x < 0.24 {
+                row.insert(f.clone(), Value::Null); // field present-null (top-level null)
+            } else {
+                row.insert(f.clone(), materialize_flat_shape(rng, s));
+            }
+        }
+        arr.push(Value::Object(row));
+    }
+    Value::Array(arr)
+}
+
+// Aligned arrays whose shared fields are fixed-shape nested objects, with a field
+// or an intermediate nested level sometimes null/absent — the v3.2 flatten path the
+// scalar-only generator never produces, so flatten/unflatten and its null-at-depth
+// losslessness edge would otherwise be unexercised.
+#[test]
+fn test_flatten_roundtrip() {
+    let iterations = get_iterations();
+    let mut rng = Rng::new(7);
+    for i in 0..iterations {
+        let val = gen_flattenable_array(&mut rng);
+        let gcf = encode_generic(&val);
+        let decoded = decode_generic(&gcf).unwrap_or_else(|e| {
+            panic!(
+                "iteration {}: decode failed: {}\n  input: {}\n  gcf: {:?}",
+                i, e, val, gcf
+            );
+        });
+        assert!(
+            structural_equal(&val, &decoded),
+            "iteration {}: round-trip mismatch\n  input: {}\n  decoded: {}\n  gcf: {:?}",
+            i,
+            val,
+            decoded,
+            gcf
+        );
+    }
+}
+
 #[test]
 fn test_random_roundtrip() {
     let iterations = get_iterations();
