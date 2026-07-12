@@ -2,7 +2,8 @@
 
 use gcf::{
     decode_generic, decode_generic_delta, encode_generic, encode_generic_delta,
-    generic_pack_root, verify_generic_delta, GenericDeltaPayload, GenericSet,
+    generic_pack_root, verify_generic_delta, GenericDeltaPayload, GenericDeltaSession, GenericSet,
+    ReanchorPolicy,
 };
 use serde_json::{Map, Value};
 use std::fs;
@@ -87,7 +88,7 @@ fn structural_equal(a: &Value, b: &Value) -> bool {
 
 fn set_from_value(v: &Value) -> GenericSet {
     GenericSet {
-        name: String::new(),
+        name: v["name"].as_str().unwrap_or("").to_string(),
         key: v["key"].as_str().unwrap_or("").to_string(),
         fields: v["fields"]
             .as_array()
@@ -332,6 +333,69 @@ fn test_conformance_v2() {
                         eprintln!("FAIL {}: unexpected error: {}", rel_path, e);
                         failed += 1;
                     }
+                }
+            }
+            "generic-delta-session" => {
+                let inp = fix.input.as_ref().unwrap();
+                let expected = fix.expected.as_ref().unwrap();
+                let base = set_from_value(&inp["base"]);
+                let tool = inp["tool"].as_str().unwrap_or("").to_string();
+                let policy = match inp["policy"]["mode"].as_str().unwrap_or("fixedN") {
+                    "sizeGuard" => ReanchorPolicy::size_guard(),
+                    _ => ReanchorPolicy::fixed_n(
+                        inp["policy"]["n"].as_u64().unwrap_or(0) as usize,
+                    ),
+                };
+                let mut s = GenericDeltaSession::new(base, tool, policy);
+                let initial_full = expected["initialFull"].as_str().unwrap();
+                let mut ok = true;
+                if s.current_full() != initial_full {
+                    eprintln!(
+                        "FAIL {}: initial full mismatch\n  got: {:?}\n  exp: {:?}",
+                        rel_path,
+                        s.current_full(),
+                        initial_full
+                    );
+                    ok = false;
+                }
+                let updates = inp["updates"].as_array().cloned().unwrap_or_default();
+                let emissions = expected["emissions"].as_array().cloned().unwrap_or_default();
+                for (i, up) in updates.iter().enumerate() {
+                    let (wire, is_full) = match s.next(set_from_value(up)) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            eprintln!("FAIL {}: turn {} error: {}", rel_path, i + 1, e);
+                            ok = false;
+                            break;
+                        }
+                    };
+                    let exp_full = emissions[i]["isFull"].as_bool().unwrap();
+                    let exp_wire = emissions[i]["wire"].as_str().unwrap();
+                    if is_full != exp_full {
+                        eprintln!(
+                            "FAIL {}: turn {} isFull={}, want {}",
+                            rel_path,
+                            i + 1,
+                            is_full,
+                            exp_full
+                        );
+                        ok = false;
+                    }
+                    if wire != exp_wire {
+                        eprintln!(
+                            "FAIL {}: turn {} wire mismatch\n  got: {:?}\n  exp: {:?}",
+                            rel_path,
+                            i + 1,
+                            wire,
+                            exp_wire
+                        );
+                        ok = false;
+                    }
+                }
+                if ok {
+                    passed += 1;
+                } else {
+                    failed += 1;
                 }
             }
             _ => {

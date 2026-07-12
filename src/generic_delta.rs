@@ -584,6 +584,125 @@ pub fn decode_generic_delta(text: &str) -> Result<GenericDeltaPayload, String> {
     Ok(d)
 }
 
+// --- producer-side re-anchor session (SPEC Section 10a.8) ---
+
+/// The working default cadence for `ReanchorPolicy::FixedN` (SPEC Section 10a.8).
+pub const DEFAULT_REANCHOR_N: usize = 15;
+
+/// Selects when a `GenericDeltaSession` re-anchors. Construct with
+/// `ReanchorPolicy::fixed_n` or `ReanchorPolicy::size_guard`.
+///
+/// This is producer-side policy only (Section 10a.8, non-normative): it never
+/// affects the wire syntax. Every payload the session emits is byte-identical to
+/// `encode_generic_full` / `encode_generic_delta`, and the decoder accepts them
+/// cadence-agnostically.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReanchorPolicy {
+    /// Re-anchor every N turns.
+    FixedN(usize),
+    /// Re-anchor once the cumulative delta since the last anchor reaches the
+    /// current full payload's size (size-adaptive).
+    SizeGuard,
+}
+
+impl ReanchorPolicy {
+    /// Re-anchor every `n` turns. `n == 0` falls back to `DEFAULT_REANCHOR_N`.
+    pub fn fixed_n(n: usize) -> Self {
+        ReanchorPolicy::FixedN(if n == 0 { DEFAULT_REANCHOR_N } else { n })
+    }
+
+    /// Re-anchor once the cumulative delta bytes since the last anchor reach the
+    /// current full payload's byte size: more anchors under heavy churn, rarely
+    /// under light churn, bounding delta spend between anchors to about one full
+    /// payload. Production-recommended.
+    pub fn size_guard() -> Self {
+        ReanchorPolicy::SizeGuard
+    }
+}
+
+/// A producer-side helper that manages the re-anchor cadence for a stream of
+/// generic-profile updates (SPEC Section 10a.8, non-normative producer policy).
+/// It is thin sugar over the primitives: each `next` emits either a compact delta
+/// or, on its chosen cadence, a full re-anchor, updating its held base. It
+/// introduces NO new wire syntax. Not safe for concurrent use.
+#[derive(Debug, Clone)]
+pub struct GenericDeltaSession {
+    base: GenericSet,
+    tool: String,
+    policy: ReanchorPolicy,
+    turn: usize,
+    cum: usize, // cumulative delta bytes since the last anchor
+}
+
+impl GenericDeltaSession {
+    /// Start a session anchored on `base`. Call `current_full` to get the initial
+    /// full payload to transmit, then `next` for each subsequent state.
+    pub fn new(base: GenericSet, tool: String, policy: ReanchorPolicy) -> Self {
+        let policy = match policy {
+            ReanchorPolicy::FixedN(0) => ReanchorPolicy::FixedN(DEFAULT_REANCHOR_N),
+            p => p,
+        };
+        GenericDeltaSession {
+            base,
+            tool,
+            policy,
+            turn: 0,
+            cum: 0,
+        }
+    }
+
+    /// Return the full payload for the current base (`encode_generic_full`). Send
+    /// this first to establish the base; it is also a valid manual re-anchor.
+    pub fn current_full(&self) -> String {
+        encode_generic_full(&self.base, &self.tool)
+    }
+
+    /// Return the number of `next` calls so far (the initial full is turn 0).
+    pub fn turn(&self) -> usize {
+        self.turn
+    }
+
+    /// Advance the session by one turn to `next`, returning the wire to transmit
+    /// and whether it is a full re-anchor (`true`) or a delta (`false`). A schema
+    /// change forces a full (Section 10a.7). The held base becomes `next` either
+    /// way. The wire is byte-identical to calling `encode_generic_full` /
+    /// `encode_generic_delta` directly.
+    pub fn next(&mut self, next: GenericSet) -> Result<(String, bool), String> {
+        self.turn += 1;
+
+        // Schema change (or a fresh key) cannot be expressed as a delta -> full.
+        if next.key != self.base.key || self.base.fields != next.fields {
+            return Ok((self.reanchor(next), true));
+        }
+
+        let d = diff_generic_sets(&self.base, &next)?;
+        let delta_wire = encode_generic_delta(&d);
+
+        let reanchor = match self.policy {
+            ReanchorPolicy::SizeGuard => {
+                self.cum + delta_wire.len() >= encode_generic_full(&next, &self.tool).len()
+            }
+            ReanchorPolicy::FixedN(n) => self.turn.is_multiple_of(n),
+        };
+
+        if reanchor {
+            return Ok((self.reanchor(next), true));
+        }
+        self.base = next;
+        self.cum += delta_wire.len();
+        Ok((delta_wire, false))
+    }
+
+    /// Emit a full payload for `next`, advance the base, and reset the
+    /// cumulative-delta counter.
+    fn reanchor(&mut self, next: GenericSet) -> String {
+        let wire = encode_generic_full(&next, &self.tool);
+        self.base = next;
+        self.cum = 0;
+        wire
+    }
+}
+
 // --- SHA-256 (local, no dependency) ---
 
 const SHA256_K: [u32; 64] = [
@@ -872,6 +991,232 @@ mod tests {
         ];
         for wire in cases {
             assert!(decode_generic_delta(wire).is_err(), "expected error for {:?}", wire);
+        }
+    }
+}
+
+#[cfg(test)]
+mod session_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn row(v: Value) -> Map<String, Value> {
+        v.as_object().unwrap().clone()
+    }
+
+    fn sess_base() -> GenericSet {
+        GenericSet {
+            name: "orders".into(),
+            key: "id".into(),
+            fields: vec!["id".into(), "total".into(), "status".into(), "customer".into()],
+            rows: vec![
+                row(json!({"id": 1001, "total": 59.98, "status": "shipped", "customer": "Alice"})),
+                row(json!({"id": 1002, "total": 29.99, "status": "pending", "customer": "Bob"})),
+                row(json!({"id": 1003, "total": 129.50, "status": "shipped", "customer": "Carol"})),
+            ],
+        }
+    }
+
+    fn mk(rows: Vec<Map<String, Value>>) -> GenericSet {
+        GenericSet {
+            name: "orders".into(),
+            key: "id".into(),
+            fields: vec!["id".into(), "total".into(), "status".into(), "customer".into()],
+            rows,
+        }
+    }
+
+    // Small per-turn updates (same schema) for the FixedN scenario.
+    fn sess_updates() -> Vec<GenericSet> {
+        vec![
+            mk(vec![
+                row(json!({"id": 1001, "total": 59.98, "status": "shipped", "customer": "Alice"})),
+                row(json!({"id": 1002, "total": 29.99, "status": "shipped", "customer": "Bob"})), // changed
+                row(json!({"id": 1003, "total": 129.50, "status": "shipped", "customer": "Carol"})),
+            ]),
+            mk(vec![
+                // add 1004
+                row(json!({"id": 1001, "total": 59.98, "status": "shipped", "customer": "Alice"})),
+                row(json!({"id": 1002, "total": 29.99, "status": "shipped", "customer": "Bob"})),
+                row(json!({"id": 1003, "total": 129.50, "status": "shipped", "customer": "Carol"})),
+                row(json!({"id": 1004, "total": 75.00, "status": "pending", "customer": "Dave"})),
+            ]),
+            mk(vec![
+                // remove 1001
+                row(json!({"id": 1002, "total": 29.99, "status": "shipped", "customer": "Bob"})),
+                row(json!({"id": 1003, "total": 129.50, "status": "shipped", "customer": "Carol"})),
+                row(json!({"id": 1004, "total": 75.00, "status": "pending", "customer": "Dave"})),
+            ]),
+            mk(vec![
+                // change 1003
+                row(json!({"id": 1002, "total": 29.99, "status": "shipped", "customer": "Bob"})),
+                row(json!({"id": 1003, "total": 140.00, "status": "delivered", "customer": "Carol"})),
+                row(json!({"id": 1004, "total": 75.00, "status": "pending", "customer": "Dave"})),
+            ]),
+            mk(vec![
+                // add 1005
+                row(json!({"id": 1002, "total": 29.99, "status": "shipped", "customer": "Bob"})),
+                row(json!({"id": 1003, "total": 140.00, "status": "delivered", "customer": "Carol"})),
+                row(json!({"id": 1004, "total": 75.00, "status": "pending", "customer": "Dave"})),
+                row(json!({"id": 1005, "total": 12.00, "status": "pending", "customer": "Eve"})),
+            ]),
+        ]
+    }
+
+    // Larger base + one-row updates so SizeGuard's cumulative delta reaches a full.
+    fn size_guard_base() -> GenericSet {
+        let names = [
+            "Alice", "Bob", "Carol", "Dave", "Eve", "Frank", "Grace", "Heidi", "Ivan", "Judy",
+            "Mallory", "Niaj", "Olivia", "Peggy", "Rupert", "Sybil", "Trent", "Uma", "Victor",
+            "Walter",
+        ];
+        let rows = names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| {
+                row(json!({"id": 2000 + i, "total": 10 + i, "status": "pending", "customer": n}))
+            })
+            .collect();
+        GenericSet {
+            name: "rows".into(),
+            key: "id".into(),
+            fields: vec!["id".into(), "total".into(), "status".into(), "customer".into()],
+            rows,
+        }
+    }
+
+    fn size_guard_updates() -> Vec<GenericSet> {
+        let base = size_guard_base();
+        (0..6)
+            .map(|turn| {
+                let mut g = base.clone();
+                // change one distinct row's status each turn
+                g.rows[turn].insert("status".into(), json!("shipped"));
+                g
+            })
+            .collect()
+    }
+
+    #[test]
+    fn fixed_n_pattern() {
+        let mut s = GenericDeltaSession::new(sess_base(), "orders_query".into(), ReanchorPolicy::fixed_n(3));
+        let want_full = [false, false, true, false, false]; // re-anchor on turn 3
+        for (i, up) in sess_updates().into_iter().enumerate() {
+            let (_, is_full) = s.next(up).unwrap();
+            assert_eq!(is_full, want_full[i], "turn {}", i + 1);
+        }
+    }
+
+    #[test]
+    fn size_guard_triggers() {
+        let mut s = GenericDeltaSession::new(size_guard_base(), "".into(), ReanchorPolicy::size_guard());
+        let mut anchors = 0;
+        for up in size_guard_updates() {
+            let (_, is_full) = s.next(up).unwrap();
+            if is_full {
+                anchors += 1;
+            }
+        }
+        assert!(
+            anchors > 0,
+            "SizeGuard never re-anchored across 6 turns; scenario should trigger at least one"
+        );
+    }
+
+    #[test]
+    fn schema_change_reanchors() {
+        let mut s = GenericDeltaSession::new(sess_base(), "orders_query".into(), ReanchorPolicy::fixed_n(15));
+        let changed = GenericSet {
+            name: "orders".into(),
+            key: "id".into(),
+            fields: vec!["id".into(), "total".into(), "status".into()], // drop a column
+            rows: vec![row(json!({"id": 1001, "total": 59.98, "status": "shipped"}))],
+        };
+        let (_, is_full) = s.next(changed).unwrap();
+        assert!(is_full, "schema change must force a full re-anchor");
+    }
+
+    // With N=15 over 30 update turns, exactly two emissions are full re-anchors
+    // (turns 15 and 30); the other 28 are deltas.
+    #[test]
+    fn fixed_n_15_over_30_turns() {
+        let mut s = GenericDeltaSession::new(sess_base(), "orders_query".into(), ReanchorPolicy::fixed_n(15));
+        let _ = s.current_full(); // bootstrap full (turn 0), not counted below
+
+        let mut fulls = 0;
+        let mut deltas = 0;
+        let mut full_turns: Vec<usize> = Vec::new();
+        let mut prev = sess_base();
+        for turn in 1..=30usize {
+            // mutate one row's total each turn so every turn is a real, same-schema delta
+            let mut next = GenericSet {
+                name: prev.name.clone(),
+                key: prev.key.clone(),
+                fields: prev.fields.clone(),
+                rows: Vec::new(),
+            };
+            let n_rows = prev.rows.len();
+            for (j, r) in prev.rows.iter().enumerate() {
+                let mut nr = r.clone();
+                if j == turn % n_rows {
+                    nr.insert("total".into(), json!(turn as f64 + 0.5));
+                }
+                next.rows.push(nr);
+            }
+            let (_, is_full) = s.next(next.clone()).unwrap();
+            if is_full {
+                fulls += 1;
+                full_turns.push(turn);
+            } else {
+                deltas += 1;
+            }
+            prev = next;
+        }
+        assert_eq!((fulls, deltas), (2, 28), "over 30 turns");
+        assert_eq!(full_turns, vec![15, 30], "full re-anchor turns");
+    }
+
+    // The load-bearing test: a consumer that applies each emission (full -> decode,
+    // delta -> decode+verify) stays byte-for-byte in sync with the producer's state
+    // at every turn, under both policies.
+    #[test]
+    fn consumer_stays_in_sync() {
+        let cases: Vec<(&str, GenericSet, Vec<GenericSet>, String, ReanchorPolicy)> = vec![
+            (
+                "fixedN3",
+                sess_base(),
+                sess_updates(),
+                "orders_query".into(),
+                ReanchorPolicy::fixed_n(3),
+            ),
+            (
+                "sizeGuard",
+                size_guard_base(),
+                size_guard_updates(),
+                "".into(),
+                ReanchorPolicy::size_guard(),
+            ),
+        ];
+        for (name, base, ups, tool, policy) in cases {
+            let mut s = GenericDeltaSession::new(base, tool, policy);
+            let (mut held, _) = decode_generic_full(&s.current_full()).unwrap();
+            for (i, up) in ups.into_iter().enumerate() {
+                let (wire, is_full) = s.next(up.clone()).unwrap();
+                if is_full {
+                    held = decode_generic_full(&wire).unwrap().0;
+                } else {
+                    let d = decode_generic_delta(&wire).unwrap();
+                    held = verify_generic_delta(&held, &d, &d.new_root).unwrap();
+                }
+                assert_eq!(
+                    generic_pack_root(&held),
+                    generic_pack_root(&up),
+                    "{}: turn {} consumer root != producer root (is_full={})",
+                    name,
+                    i + 1,
+                    is_full
+                );
+            }
         }
     }
 }
