@@ -2,7 +2,8 @@
 
 use gcf::{
     decode_generic, decode_generic_delta, encode_generic, encode_generic_delta, generic_pack_root,
-    verify_generic_delta, GenericDeltaPayload, GenericDeltaSession, GenericSet, ReanchorPolicy,
+    verify_generic_delta, Edge, GenericDeltaPayload, GenericDeltaSession, GenericSet,
+    ReanchorPolicy, StreamEncoder, StreamOptions, Symbol,
 };
 use serde_json::{Map, Value};
 use std::fs;
@@ -412,6 +413,57 @@ fn test_conformance_v2() {
                     passed += 1;
                 } else {
                     failed += 1;
+                }
+            }
+            "graph-stream-encode" => {
+                let inp = fix.input.as_ref().unwrap();
+                let expected = match fix.expected.as_ref().and_then(|v| v.as_str()) {
+                    Some(s) => s,
+                    None => {
+                        skipped += 1;
+                        continue;
+                    }
+                };
+                let tool = inp["tool"].as_str().unwrap_or("");
+                let opts = StreamOptions {
+                    token_budget: inp["tokenBudget"].as_i64().unwrap_or(0),
+                    tokens_used: inp["tokensUsed"].as_i64().unwrap_or(0),
+                    pack_root: inp["packRoot"].as_str().unwrap_or("").to_string(),
+                    session: inp["session"].as_bool().unwrap_or(false),
+                };
+                let mut buf: Vec<u8> = Vec::new();
+                {
+                    let enc = StreamEncoder::new(&mut buf, tool, opts);
+                    for sym in inp["symbols"].as_array().cloned().unwrap_or_default() {
+                        enc.write_symbol(&Symbol {
+                            qualified_name: sym["qualifiedName"].as_str().unwrap_or("").to_string(),
+                            kind: sym["kind"].as_str().unwrap_or("").to_string(),
+                            score: sym["score"].as_f64().unwrap_or(0.0),
+                            provenance: sym["provenance"].as_str().unwrap_or("").to_string(),
+                            distance: sym["distance"].as_i64().unwrap_or(0) as i32,
+                            signature: String::new(),
+                            components: Default::default(),
+                        });
+                    }
+                    for edge in inp["edges"].as_array().cloned().unwrap_or_default() {
+                        enc.write_edge(&Edge {
+                            source: edge["source"].as_str().unwrap_or("").to_string(),
+                            target: edge["target"].as_str().unwrap_or("").to_string(),
+                            edge_type: edge["edgeType"].as_str().unwrap_or("").to_string(),
+                            status: String::new(),
+                        });
+                    }
+                    enc.close();
+                }
+                let got = String::from_utf8(buf).unwrap();
+                if got != expected {
+                    eprintln!(
+                        "FAIL {}: graph-stream-encode mismatch\n  got: {:?}\n  exp: {:?}",
+                        rel_path, got, expected
+                    );
+                    failed += 1;
+                } else {
+                    passed += 1;
                 }
             }
             _ => {
