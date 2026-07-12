@@ -35,11 +35,16 @@ const ALPHABET: &[char] = &[
 
 fn rand_str(rng: &mut Rng, maxlen: usize) -> String {
     let n = rng.below(maxlen + 1);
-    (0..n).map(|_| ALPHABET[rng.below(ALPHABET.len())]).collect()
+    (0..n)
+        .map(|_| ALPHABET[rng.below(ALPHABET.len())])
+        .collect()
 }
 
 fn row(a: &str, b: &str, id: i64) -> Map<String, Value> {
-    json!({"id": id, "a": a, "b": b}).as_object().unwrap().clone()
+    json!({"id": id, "a": a, "b": b})
+        .as_object()
+        .unwrap()
+        .clone()
 }
 
 #[test]
@@ -54,7 +59,8 @@ fn fuzz_string_cell_roundtrip() {
             fields: vec!["id".into(), "a".into(), "b".into()],
             rows: vec![row(&a, &b, 1), row(&b, &a, 2)],
         };
-        let (got, _) = decode_generic_full(&encode_generic_full(&s, "")).expect("round-trip decode");
+        let (got, _) =
+            decode_generic_full(&encode_generic_full(&s, "")).expect("round-trip decode");
         assert_eq!(
             generic_pack_root(&got),
             generic_pack_root(&s),

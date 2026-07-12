@@ -8,8 +8,8 @@
 //! fixtures verify it end to end.
 
 use crate::scalar::{
-    format_key, format_number, format_scalar, parse_quoted_string, parse_scalar,
-    split_respecting_quotes, quote_string, ScalarValue,
+    format_key, format_number, format_scalar, parse_quoted_string, parse_scalar, quote_string,
+    split_respecting_quotes, ScalarValue,
 };
 use serde_json::{Map, Value};
 use std::collections::HashMap;
@@ -244,14 +244,26 @@ pub fn encode_generic_delta(d: &GenericDeltaPayload) -> String {
     b.push('\n');
 
     if !d.added.is_empty() {
-        writeln!(b, "## added [{}]{{{}}}", d.added.len(), field_decl(&d.fields, &d.key)).unwrap();
+        writeln!(
+            b,
+            "## added [{}]{{{}}}",
+            d.added.len(),
+            field_decl(&d.fields, &d.key)
+        )
+        .unwrap();
         for row in &d.added {
             b.push_str(&encode_row(row, &d.fields));
             b.push('\n');
         }
     }
     if !d.changed.is_empty() {
-        writeln!(b, "## changed [{}]{{{}}}", d.changed.len(), field_decl(&d.fields, &d.key)).unwrap();
+        writeln!(
+            b,
+            "## changed [{}]{{{}}}",
+            d.changed.len(),
+            field_decl(&d.fields, &d.key)
+        )
+        .unwrap();
         for row in &d.changed {
             b.push_str(&encode_row(row, &d.fields));
             b.push('\n');
@@ -408,7 +420,10 @@ fn find_bracket_start(s: &str) -> Option<usize> {
 /// fields and the key field (the one that was `@`-marked) (Section 10a.1).
 fn split_delta_field_decl(decl: &str) -> Result<(Vec<String>, String), String> {
     if decl.len() < 2 || !decl.starts_with('{') || !decl.ends_with('}') {
-        return Err(format!("delta_invalid: invalid field declaration: {}", decl));
+        return Err(format!(
+            "delta_invalid: invalid field declaration: {}",
+            decl
+        ));
     }
     let inner = &decl[1..decl.len() - 1];
     if inner.is_empty() {
@@ -442,7 +457,10 @@ fn parse_section_header(content: &str) -> Result<(String, usize, Vec<String>, St
     let name = content[..bi].trim().to_string();
     let rest = &content[bi..]; // "[N]{...}"
     if !rest.starts_with('[') {
-        return Err(format!("delta_invalid: malformed section header: {}", content));
+        return Err(format!(
+            "delta_invalid: malformed section header: {}",
+            content
+        ));
     }
     let close = rest
         .find(']')
@@ -572,7 +590,8 @@ pub fn decode_generic_delta(text: &str) -> Result<GenericDeltaPayload, String> {
                                 .to_string(),
                         );
                     }
-                    d.removed.push(scalar_to_value(parse_scalar(lines[i], true)?)?);
+                    d.removed
+                        .push(scalar_to_value(parse_scalar(lines[i], true)?)?);
                     i += 1;
                 }
             }
@@ -812,7 +831,12 @@ mod tests {
         GenericSet {
             name: "orders".into(),
             key: "id".into(),
-            fields: vec!["id".into(), "total".into(), "status".into(), "customer".into()],
+            fields: vec![
+                "id".into(),
+                "total".into(),
+                "status".into(),
+                "customer".into(),
+            ],
             rows: vec![
                 row(json!({"id": 1001, "total": 59.98, "status": "shipped", "customer": "Alice"})),
                 row(json!({"id": 1002, "total": 29.99, "status": "pending", "customer": "Bob"})),
@@ -825,7 +849,12 @@ mod tests {
         GenericSet {
             name: "orders".into(),
             key: "id".into(),
-            fields: vec!["id".into(), "total".into(), "status".into(), "customer".into()],
+            fields: vec![
+                "id".into(),
+                "total".into(),
+                "status".into(),
+                "customer".into(),
+            ],
             rows: vec![
                 row(json!({"id": 1002, "total": 29.99, "status": "shipped", "customer": "Bob"})),
                 row(json!({"id": 1003, "total": 129.50, "status": "shipped", "customer": "Carol"})),
@@ -870,8 +899,9 @@ mod tests {
         let base_root = generic_pack_root(&base);
 
         let mut dup = orders_base();
-        dup.rows
-            .push(row(json!({"id": 1001, "total": 1.0, "status": "x", "customer": "y"})));
+        dup.rows.push(row(
+            json!({"id": 1001, "total": 1.0, "status": "x", "customer": "y"}),
+        ));
         assert!(diff_generic_sets(&dup, &orders_next())
             .unwrap_err()
             .contains("duplicate identity"));
@@ -886,7 +916,9 @@ mod tests {
             key: "id".into(),
             fields: base.fields.clone(),
             base_root: base_root.clone(),
-            added: vec![row(json!({"id": 1001, "total": 1.0, "status": "s", "customer": "c"}))],
+            added: vec![row(
+                json!({"id": 1001, "total": 1.0, "status": "s", "customer": "c"}),
+            )],
             ..Default::default()
         };
         assert!(verify_generic_delta(&base, &add_existing, "sha256:x")
@@ -897,7 +929,9 @@ mod tests {
             key: "id".into(),
             fields: base.fields.clone(),
             base_root: base_root.clone(),
-            changed: vec![row(json!({"id": 9999, "total": 1.0, "status": "s", "customer": "c"}))],
+            changed: vec![row(
+                json!({"id": 9999, "total": 1.0, "status": "s", "customer": "c"}),
+            )],
             ..Default::default()
         };
         assert!(verify_generic_delta(&base, &change_missing, "sha256:x")
@@ -943,8 +977,7 @@ mod tests {
     fn end_to_end() {
         let base = orders_base();
         let next = orders_next();
-        let (held, _) =
-            decode_generic_full(&encode_generic_full(&base, "orders_query")).unwrap();
+        let (held, _) = decode_generic_full(&encode_generic_full(&base, "orders_query")).unwrap();
         let d = diff_generic_sets(&base, &next).unwrap();
         let parsed = decode_generic_delta(&encode_generic_delta(&d)).unwrap();
         let result = verify_generic_delta(&held, &parsed, &generic_pack_root(&next)).unwrap();
@@ -956,7 +989,12 @@ mod tests {
         let nulls = GenericSet {
             name: "items".into(),
             key: "id".into(),
-            fields: vec!["id".into(), "total".into(), "status".into(), "customer".into()],
+            fields: vec![
+                "id".into(),
+                "total".into(),
+                "status".into(),
+                "customer".into(),
+            ],
             rows: vec![
                 row(json!({"id": 2001, "total": 10.0, "status": null, "customer": "Amy"})),
                 row(json!({"id": 2002, "total": null, "status": "open", "customer": null})),
@@ -990,7 +1028,11 @@ mod tests {
             "GCF profile=generic delta=true base_root=a new_root=b key=id\n## added [01]{@id,x}\n1|2\n",
         ];
         for wire in cases {
-            assert!(decode_generic_delta(wire).is_err(), "expected error for {:?}", wire);
+            assert!(
+                decode_generic_delta(wire).is_err(),
+                "expected error for {:?}",
+                wire
+            );
         }
     }
 }
@@ -1008,7 +1050,12 @@ mod session_tests {
         GenericSet {
             name: "orders".into(),
             key: "id".into(),
-            fields: vec!["id".into(), "total".into(), "status".into(), "customer".into()],
+            fields: vec![
+                "id".into(),
+                "total".into(),
+                "status".into(),
+                "customer".into(),
+            ],
             rows: vec![
                 row(json!({"id": 1001, "total": 59.98, "status": "shipped", "customer": "Alice"})),
                 row(json!({"id": 1002, "total": 29.99, "status": "pending", "customer": "Bob"})),
@@ -1021,7 +1068,12 @@ mod session_tests {
         GenericSet {
             name: "orders".into(),
             key: "id".into(),
-            fields: vec!["id".into(), "total".into(), "status".into(), "customer".into()],
+            fields: vec![
+                "id".into(),
+                "total".into(),
+                "status".into(),
+                "customer".into(),
+            ],
             rows,
         }
     }
@@ -1050,13 +1102,17 @@ mod session_tests {
             mk(vec![
                 // change 1003
                 row(json!({"id": 1002, "total": 29.99, "status": "shipped", "customer": "Bob"})),
-                row(json!({"id": 1003, "total": 140.00, "status": "delivered", "customer": "Carol"})),
+                row(
+                    json!({"id": 1003, "total": 140.00, "status": "delivered", "customer": "Carol"}),
+                ),
                 row(json!({"id": 1004, "total": 75.00, "status": "pending", "customer": "Dave"})),
             ]),
             mk(vec![
                 // add 1005
                 row(json!({"id": 1002, "total": 29.99, "status": "shipped", "customer": "Bob"})),
-                row(json!({"id": 1003, "total": 140.00, "status": "delivered", "customer": "Carol"})),
+                row(
+                    json!({"id": 1003, "total": 140.00, "status": "delivered", "customer": "Carol"}),
+                ),
                 row(json!({"id": 1004, "total": 75.00, "status": "pending", "customer": "Dave"})),
                 row(json!({"id": 1005, "total": 12.00, "status": "pending", "customer": "Eve"})),
             ]),
@@ -1080,7 +1136,12 @@ mod session_tests {
         GenericSet {
             name: "rows".into(),
             key: "id".into(),
-            fields: vec!["id".into(), "total".into(), "status".into(), "customer".into()],
+            fields: vec![
+                "id".into(),
+                "total".into(),
+                "status".into(),
+                "customer".into(),
+            ],
             rows,
         }
     }
@@ -1099,7 +1160,11 @@ mod session_tests {
 
     #[test]
     fn fixed_n_pattern() {
-        let mut s = GenericDeltaSession::new(sess_base(), "orders_query".into(), ReanchorPolicy::fixed_n(3));
+        let mut s = GenericDeltaSession::new(
+            sess_base(),
+            "orders_query".into(),
+            ReanchorPolicy::fixed_n(3),
+        );
         let want_full = [false, false, true, false, false]; // re-anchor on turn 3
         for (i, up) in sess_updates().into_iter().enumerate() {
             let (_, is_full) = s.next(up).unwrap();
@@ -1109,7 +1174,8 @@ mod session_tests {
 
     #[test]
     fn size_guard_triggers() {
-        let mut s = GenericDeltaSession::new(size_guard_base(), "".into(), ReanchorPolicy::size_guard());
+        let mut s =
+            GenericDeltaSession::new(size_guard_base(), "".into(), ReanchorPolicy::size_guard());
         let mut anchors = 0;
         for up in size_guard_updates() {
             let (_, is_full) = s.next(up).unwrap();
@@ -1125,12 +1191,18 @@ mod session_tests {
 
     #[test]
     fn schema_change_reanchors() {
-        let mut s = GenericDeltaSession::new(sess_base(), "orders_query".into(), ReanchorPolicy::fixed_n(15));
+        let mut s = GenericDeltaSession::new(
+            sess_base(),
+            "orders_query".into(),
+            ReanchorPolicy::fixed_n(15),
+        );
         let changed = GenericSet {
             name: "orders".into(),
             key: "id".into(),
             fields: vec!["id".into(), "total".into(), "status".into()], // drop a column
-            rows: vec![row(json!({"id": 1001, "total": 59.98, "status": "shipped"}))],
+            rows: vec![row(
+                json!({"id": 1001, "total": 59.98, "status": "shipped"}),
+            )],
         };
         let (_, is_full) = s.next(changed).unwrap();
         assert!(is_full, "schema change must force a full re-anchor");
@@ -1140,7 +1212,11 @@ mod session_tests {
     // (turns 15 and 30); the other 28 are deltas.
     #[test]
     fn fixed_n_15_over_30_turns() {
-        let mut s = GenericDeltaSession::new(sess_base(), "orders_query".into(), ReanchorPolicy::fixed_n(15));
+        let mut s = GenericDeltaSession::new(
+            sess_base(),
+            "orders_query".into(),
+            ReanchorPolicy::fixed_n(15),
+        );
         let _ = s.current_full(); // bootstrap full (turn 0), not counted below
 
         let mut fulls = 0;

@@ -1,9 +1,8 @@
 //! Conformance tests for GCF v2.0 (133 fixtures).
 
 use gcf::{
-    decode_generic, decode_generic_delta, encode_generic, encode_generic_delta,
-    generic_pack_root, verify_generic_delta, GenericDeltaPayload, GenericDeltaSession, GenericSet,
-    ReanchorPolicy,
+    decode_generic, decode_generic_delta, encode_generic, encode_generic_delta, generic_pack_root,
+    verify_generic_delta, GenericDeltaPayload, GenericDeltaSession, GenericSet, ReanchorPolicy,
 };
 use serde_json::{Map, Value};
 use std::fs;
@@ -120,7 +119,11 @@ fn delta_from_value(v: &Value) -> GenericDeltaPayload {
         new_root: v["newRoot"].as_str().unwrap_or("").to_string(),
         added: rows_from(v, "added"),
         changed: rows_from(v, "changed"),
-        removed: v.get("removed").and_then(|x| x.as_array()).cloned().unwrap_or_default(),
+        removed: v
+            .get("removed")
+            .and_then(|x| x.as_array())
+            .cloned()
+            .unwrap_or_default(),
         delta_tokens: v.get("deltaTokens").and_then(|x| x.as_u64()).unwrap_or(0),
         full_tokens: v.get("fullTokens").and_then(|x| x.as_u64()).unwrap_or(0),
     }
@@ -278,7 +281,10 @@ fn test_conformance_v2() {
                 let got = generic_pack_root(&set);
                 let exp = fix.expected.as_ref().and_then(|v| v.as_str()).unwrap();
                 if got != exp {
-                    eprintln!("FAIL {}: pack-root mismatch\n  got: {}\n  exp: {}", rel_path, got, exp);
+                    eprintln!(
+                        "FAIL {}: pack-root mismatch\n  got: {}\n  exp: {}",
+                        rel_path, got, exp
+                    );
                     failed += 1;
                 } else {
                     passed += 1;
@@ -289,7 +295,10 @@ fn test_conformance_v2() {
                 let got = encode_generic_delta(&d);
                 let exp = fix.expected.as_ref().and_then(|v| v.as_str()).unwrap();
                 if got != exp {
-                    eprintln!("FAIL {}: delta encode mismatch\n  got: {:?}\n  exp: {:?}", rel_path, got, exp);
+                    eprintln!(
+                        "FAIL {}: delta encode mismatch\n  got: {:?}\n  exp: {:?}",
+                        rel_path, got, exp
+                    );
                     failed += 1;
                 } else {
                     passed += 1;
@@ -318,14 +327,20 @@ fn test_conformance_v2() {
                         }
                     }
                     (Ok(_), Some(exp_err)) => {
-                        eprintln!("FAIL {}: expected error '{}', got success", rel_path, exp_err);
+                        eprintln!(
+                            "FAIL {}: expected error '{}', got success",
+                            rel_path, exp_err
+                        );
                         failed += 1;
                     }
                     (Err(e), Some(exp_err)) => {
                         if e.contains(exp_err) {
                             passed += 1;
                         } else {
-                            eprintln!("FAIL {}: wrong error\n  got: {}\n  expected: {}", rel_path, e, exp_err);
+                            eprintln!(
+                                "FAIL {}: wrong error\n  got: {}\n  expected: {}",
+                                rel_path, e, exp_err
+                            );
                             failed += 1;
                         }
                     }
@@ -342,9 +357,7 @@ fn test_conformance_v2() {
                 let tool = inp["tool"].as_str().unwrap_or("").to_string();
                 let policy = match inp["policy"]["mode"].as_str().unwrap_or("fixedN") {
                     "sizeGuard" => ReanchorPolicy::size_guard(),
-                    _ => ReanchorPolicy::fixed_n(
-                        inp["policy"]["n"].as_u64().unwrap_or(0) as usize,
-                    ),
+                    _ => ReanchorPolicy::fixed_n(inp["policy"]["n"].as_u64().unwrap_or(0) as usize),
                 };
                 let mut s = GenericDeltaSession::new(base, tool, policy);
                 let initial_full = expected["initialFull"].as_str().unwrap();
@@ -359,7 +372,10 @@ fn test_conformance_v2() {
                     ok = false;
                 }
                 let updates = inp["updates"].as_array().cloned().unwrap_or_default();
-                let emissions = expected["emissions"].as_array().cloned().unwrap_or_default();
+                let emissions = expected["emissions"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
                 for (i, up) in updates.iter().enumerate() {
                     let (wire, is_full) = match s.next(set_from_value(up)) {
                         Ok(r) => r,
