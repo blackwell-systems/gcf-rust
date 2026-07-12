@@ -1,5 +1,17 @@
 # Changelog
 
+## v2.4.0 (2026-07-12)
+
+### Streaming: opt-in labeled trailer counts (SPEC §8.4.1)
+
+- New `StreamOptions.labeled_trailer_counts`. When set, the `##! summary` graph streaming trailer emits `counts=` in the labeled form `label:count` per group (e.g. `counts=targets:2,related:1,edges:3`) instead of the default positional values-only form (`counts=2,1,3`). Default false is byte-identical to prior output.
+- Opt-in and non-breaking: a producer-side comprehension aid for known weak consumers. The trailer counts remain informational (decoder-ignored) in both forms; neither changes the decoded payload. Mirrors the `gcf-go` reference.
+
+### Conformance and docs
+
+- The conformance runner now executes the `graph-stream-encode` fixtures (streaming-encode parity, previously decode-only): fixture 004 (positional trailer) and 005 (labeled trailer).
+- README: corrected the streaming example trailer from the defunct `## _summary … sections=` to the real `##! summary … counts=`; README now leads with the project diagram.
+
 ## v2.3.0 (2026-07-12)
 
 ### Generic-profile delta encoding (SPEC §10a)

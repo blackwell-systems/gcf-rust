@@ -1,6 +1,6 @@
 [package]
 name = "gcf"
-version = "2.3.0"
+version = "2.4.0"
 edition = "2021"
 description = "The AI-native wire format for structured data. 50-92% fewer tokens than JSON. 100% comprehension on every frontier model. Zero dependencies (except serde)."
 license = "MIT"
