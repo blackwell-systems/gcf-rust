@@ -10,9 +10,28 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
+      # Check out gcf-rust and the shared-fixtures gcf repo as SIBLINGS so the
+      # conformance runner's CARGO_MANIFEST_DIR/../gcf/tests/conformance path
+      # resolves on CI (otherwise conformance silently finds 0 fixtures).
       - uses: actions/checkout@v4
+        with:
+          path: gcf-rust
+      - uses: actions/checkout@v4
+        with:
+          repository: blackwell-systems/gcf
+          path: gcf
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo fmt --check
-      - run: cargo clippy -- -D warnings
-      - run: cargo test --test conformance_v2 --test roundtrip_v2 --lib
-      - run: FUZZ_ITERATIONS=1000 cargo test --test fuzz_parallel --test multiformat_fuzz -- --nocapture
+        with:
+          components: clippy, rustfmt
+      - name: Format check
+        run: cargo fmt --check
+        working-directory: gcf-rust
+      - name: Clippy
+        run: cargo clippy -- -D warnings
+        working-directory: gcf-rust
+      - name: Conformance and round-trip tests (shared fixtures)
+        run: cargo test --test conformance_v2 --test roundtrip_v2 --lib
+        working-directory: gcf-rust
+      - name: Fuzz (parallel + multiformat)
+        run: FUZZ_ITERATIONS=1000 cargo test --test fuzz_parallel --test multiformat_fuzz -- --nocapture
+        working-directory: gcf-rust

@@ -185,6 +185,56 @@ Sales|2|Bob|72000
 
 Works on objects, arrays, and primitives. Arrays of uniform objects get tabular rows. Nested objects use `## key` section headers.
 
+## Generic-Profile Delta (multi-turn)
+
+In an agent loop the same keyed table gets re-queried turn after turn. Instead of re-sending the whole table each time, send only the changed rows (SPEC §10a):
+
+```rust
+use gcf::{GenericSet, diff_generic_sets, encode_generic_delta, verify_generic_delta};
+use serde_json::json;
+
+let base = GenericSet {
+    name: "orders".into(),
+    key: "id".into(),
+    fields: vec!["id".into(), "status".into()],
+    rows: vec![
+        json!({"id": 1001, "status": "pending"}).as_object().unwrap().clone(),
+        json!({"id": 1002, "status": "shipped"}).as_object().unwrap().clone(),
+    ],
+};
+let next = GenericSet {
+    name: "orders".into(),
+    key: "id".into(),
+    fields: vec!["id".into(), "status".into()],
+    rows: vec![
+        json!({"id": 1001, "status": "shipped"}).as_object().unwrap().clone(), // changed
+        json!({"id": 1003, "status": "pending"}).as_object().unwrap().clone(), // added (1002 removed)
+    ],
+};
+
+let d = diff_generic_sets(&base, &next).unwrap();       // ## added / ## changed / ## removed
+let wire = encode_generic_delta(&d);
+let held = verify_generic_delta(&base, &d, &d.new_root).unwrap(); // atomic apply + new_root verification
+```
+
+Opt-in and bilateral, keyed on content-addressed pack roots. By the 5th overlapping call, ~97% fewer tokens than re-sending JSON.
+
+### Re-anchor session helper
+
+`GenericDeltaSession` manages the delta/re-anchor cadence for you: each `next` returns either a compact delta or, on its cadence, a full re-anchor (which re-grounds the consumer), updating its held base.
+
+```rust
+use gcf::{GenericDeltaSession, ReanchorPolicy};
+
+let mut sess = GenericDeltaSession::new(base, "orders".into(), ReanchorPolicy::size_guard());
+let wire = sess.current_full();               // transmit the base once to establish it
+for snapshot in stream {                      // each turn's current GenericSet
+    let (wire, is_full) = sess.next(snapshot).unwrap(); // a compact delta, or a periodic full re-anchor
+}
+```
+
+`ReanchorPolicy::fixed_n(15)` re-anchors every N turns; `ReanchorPolicy::size_guard()` (recommended) re-anchors once the cumulative delta reaches a full payload's size. It introduces no new wire syntax and the decoder stays cadence-agnostic, so a re-anchor is just the protocol's "full" outcome on a schedule.
+
 ## API
 
 | Function | Description |
@@ -194,6 +244,10 @@ Works on objects, arrays, and primitives. Arrays of uniform objects get tabular 
 | `decode(input: &str) -> Result<Payload, DecodeError>` | Parse GCF text back to a Payload |
 | `encode_with_session(p: &Payload, s: &Session) -> String` | Encode with session deduplication |
 | `encode_delta(d: &DeltaPayload) -> String` | Encode a delta (added/removed only) |
+| `diff_generic_sets(base, next) -> Result<GenericDeltaPayload, String>` | Diff two keyed record sets (generic profile) |
+| `encode_generic_delta(d) -> String` / `decode_generic_delta(s)` | Generic-profile delta wire (§10a) |
+| `verify_generic_delta(base, d, root) -> Result<GenericSet, String>` | Atomic apply + `new_root` verification |
+| `GenericDeltaSession::new(base, tool, policy)` | Producer-side re-anchor cadence helper (§10a.8) |
 | `Session::new() -> Session` | Create a new session tracker (thread-safe via Mutex) |
 
 ## Types
@@ -204,6 +258,8 @@ Works on objects, arrays, and primitives. Arrays of uniform objects get tabular 
 | `Symbol` | Graph node: qualified name, kind, score, provenance, distance |
 | `Edge` | Directed relationship: source, target, edge type |
 | `DeltaPayload` | Diff between two packs: added/removed symbols and edges |
+| `GenericSet` / `GenericDeltaPayload` | Keyed record set and its generic-profile diff (§10a) |
+| `GenericDeltaSession` / `ReanchorPolicy` | Stateful producer scheduling delta vs full re-anchor (§10a.8) |
 | `Components` | Score breakdown: blast_radius, confidence, recency, distance |
 | `Session` | Thread-safe tracker for multi-call deduplication |
 | `DecodeError` | Enum of decode failure modes |

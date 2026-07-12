@@ -276,8 +276,12 @@ pub fn parse_quoted_string(s: &str) -> Result<String, String> {
                 bytes[i]
             ));
         }
-        out.push(bytes[i] as char);
-        i += 1;
+        // Literal character: may be a multi-byte UTF-8 sequence. `bytes[i] as char`
+        // would reinterpret each byte as Latin-1 and corrupt it, so copy the whole
+        // char and advance by its UTF-8 length.
+        let ch = s[i..].chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
     }
     Err("unterminated_quote".into())
 }
