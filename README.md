@@ -121,7 +121,7 @@ enc.write_edge(&Edge { source: "pkg.Server".into(), target: "pkg.Auth".into(), e
 enc.close();
 ```
 
-Output uses `[?]` deferred counts and `## _summary` trailer. Standard `decode()` handles streaming output with no changes. Thread-safe via Mutex.
+Output uses `[?]` deferred counts and `##! summary` trailer. Standard `decode()` handles streaming output with no changes. Thread-safe via Mutex.
 
 ## Delta Encoding
 
