@@ -1,4 +1,8 @@
 <p align="center">
+  <img src="assets/gcf-rust-diagram.png" alt="gcf-rust" width="100%">
+</p>
+
+<p align="center">
   <a href="https://github.com/blackwell-systems"><img src="https://raw.githubusercontent.com/blackwell-systems/blackwell-docs-theme/main/badge-trademark.svg" alt="Blackwell Systems"></a>
   <a href="https://github.com/blackwell-systems/gcf-rust/actions"><img src="https://github.com/blackwell-systems/gcf-rust/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
