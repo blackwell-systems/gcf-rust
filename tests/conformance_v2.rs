@@ -1,7 +1,10 @@
 //! Conformance tests for GCF v2.0 (133 fixtures).
 
-use gcf::{decode_generic, encode_generic};
-use serde_json::Value;
+use gcf::{
+    decode_generic, decode_generic_delta, encode_generic, encode_generic_delta,
+    generic_pack_root, verify_generic_delta, GenericDeltaPayload, GenericSet,
+};
+use serde_json::{Map, Value};
 use std::fs;
 use std::path::Path;
 
@@ -79,6 +82,46 @@ fn structural_equal(a: &Value, b: &Value) -> bool {
         }
         (Value::Number(an), Value::Number(bn)) => an.as_f64() == bn.as_f64(),
         _ => a == b,
+    }
+}
+
+fn set_from_value(v: &Value) -> GenericSet {
+    GenericSet {
+        name: String::new(),
+        key: v["key"].as_str().unwrap_or("").to_string(),
+        fields: v["fields"]
+            .as_array()
+            .map(|a| a.iter().map(|f| f.as_str().unwrap().to_string()).collect())
+            .unwrap_or_default(),
+        rows: v["rows"]
+            .as_array()
+            .map(|a| a.iter().map(|r| r.as_object().unwrap().clone()).collect())
+            .unwrap_or_default(),
+    }
+}
+
+fn rows_from(v: &Value, key: &str) -> Vec<Map<String, Value>> {
+    v.get(key)
+        .and_then(|x| x.as_array())
+        .map(|a| a.iter().map(|r| r.as_object().unwrap().clone()).collect())
+        .unwrap_or_default()
+}
+
+fn delta_from_value(v: &Value) -> GenericDeltaPayload {
+    GenericDeltaPayload {
+        tool: v["tool"].as_str().unwrap_or("").to_string(),
+        key: v["key"].as_str().unwrap_or("").to_string(),
+        fields: v["fields"]
+            .as_array()
+            .map(|a| a.iter().map(|f| f.as_str().unwrap().to_string()).collect())
+            .unwrap_or_default(),
+        base_root: v["baseRoot"].as_str().unwrap_or("").to_string(),
+        new_root: v["newRoot"].as_str().unwrap_or("").to_string(),
+        added: rows_from(v, "added"),
+        changed: rows_from(v, "changed"),
+        removed: v.get("removed").and_then(|x| x.as_array()).cloned().unwrap_or_default(),
+        delta_tokens: v.get("deltaTokens").and_then(|x| x.as_u64()).unwrap_or(0),
+        full_tokens: v.get("fullTokens").and_then(|x| x.as_u64()).unwrap_or(0),
     }
 }
 
@@ -226,6 +269,68 @@ fn test_conformance_v2() {
                         } else {
                             passed += 1;
                         }
+                    }
+                }
+            }
+            "generic-pack-root" => {
+                let set = set_from_value(fix.input.as_ref().unwrap());
+                let got = generic_pack_root(&set);
+                let exp = fix.expected.as_ref().and_then(|v| v.as_str()).unwrap();
+                if got != exp {
+                    eprintln!("FAIL {}: pack-root mismatch\n  got: {}\n  exp: {}", rel_path, got, exp);
+                    failed += 1;
+                } else {
+                    passed += 1;
+                }
+            }
+            "generic-delta" => {
+                let d = delta_from_value(fix.input.as_ref().unwrap());
+                let got = encode_generic_delta(&d);
+                let exp = fix.expected.as_ref().and_then(|v| v.as_str()).unwrap();
+                if got != exp {
+                    eprintln!("FAIL {}: delta encode mismatch\n  got: {:?}\n  exp: {:?}", rel_path, got, exp);
+                    failed += 1;
+                } else {
+                    passed += 1;
+                }
+            }
+            "generic-delta-verify" | "generic-delta-decode" => {
+                let inp = fix.input.as_ref().unwrap();
+                let base = set_from_value(&inp["base"]);
+                let expected_new_root = inp["expectedNewRoot"].as_str().unwrap();
+                let outcome = if fix.operation == "generic-delta-verify" {
+                    verify_generic_delta(&base, &delta_from_value(&inp["delta"]), expected_new_root)
+                } else {
+                    match decode_generic_delta(inp["wire"].as_str().unwrap()) {
+                        Ok(d) => verify_generic_delta(&base, &d, expected_new_root),
+                        Err(e) => Err(e),
+                    }
+                };
+                match (outcome, fix.expected_error.as_ref()) {
+                    (Ok(res), None) => {
+                        let exp = fix.expected.as_ref().and_then(|v| v.as_str()).unwrap();
+                        if generic_pack_root(&res) != exp {
+                            eprintln!("FAIL {}: applied root mismatch", rel_path);
+                            failed += 1;
+                        } else {
+                            passed += 1;
+                        }
+                    }
+                    (Ok(_), Some(exp_err)) => {
+                        eprintln!("FAIL {}: expected error '{}', got success", rel_path, exp_err);
+                        failed += 1;
+                    }
+                    (Err(e), Some(exp_err)) => {
+                        if e.contains(exp_err) {
+                            passed += 1;
+                        } else {
+                            eprintln!("FAIL {}: wrong error\n  got: {}\n  expected: {}", rel_path, e, exp_err);
+                            failed += 1;
+                        }
+                    }
+                    (Err(e), None) => {
+                        eprintln!("FAIL {}: unexpected error: {}", rel_path, e);
+                        failed += 1;
                     }
                 }
             }

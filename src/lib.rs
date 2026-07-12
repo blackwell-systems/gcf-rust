@@ -41,6 +41,7 @@ pub mod decode_generic;
 pub mod delta;
 pub mod encode;
 pub mod generic;
+pub mod generic_delta;
 pub mod scalar;
 pub mod session;
 pub mod stream;
@@ -52,6 +53,11 @@ pub use decode_generic::decode_generic;
 pub use delta::encode_delta;
 pub use encode::encode;
 pub use generic::{encode_generic, encode_generic_with_options, GenericOptions};
+pub use generic_delta::{
+    canonical_cell, decode_generic_delta, decode_generic_full, diff_generic_sets,
+    encode_generic_delta, encode_generic_full, generic_pack_root, verify_generic_delta,
+    GenericDeltaPayload, GenericSet,
+};
 pub use session::{encode_with_session, Session};
 pub use stream::{StreamEncoder, StreamOptions};
 pub use stream_generic::GenericStreamEncoder;
