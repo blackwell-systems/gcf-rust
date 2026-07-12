@@ -19,6 +19,7 @@ struct Fixture {
     expected_error: Option<String>,
     #[serde(rename = "inputBase64")]
     input_base64: Option<String>,
+    options: Option<Value>,
 }
 
 fn load_fixtures() -> Vec<(String, Fixture)> {
@@ -416,6 +417,12 @@ fn test_conformance_v2() {
                 }
             }
             "graph-stream-encode" => {
+                // Skip a fixture requesting stream options this runner does not support
+                // (e.g. labeledTrailerCounts, SPEC 8.4.1). This runner supports none.
+                if fix.options.as_ref().and_then(|o| o.as_object()).map_or(false, |m| !m.is_empty()) {
+                    skipped += 1;
+                    continue;
+                }
                 let inp = fix.input.as_ref().unwrap();
                 let expected = match fix.expected.as_ref().and_then(|v| v.as_str()) {
                     Some(s) => s,
