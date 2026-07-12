@@ -417,12 +417,24 @@ fn test_conformance_v2() {
                 }
             }
             "graph-stream-encode" => {
-                // Skip a fixture requesting stream options this runner does not support
-                // (e.g. labeledTrailerCounts, SPEC 8.4.1). This runner supports none.
-                if fix.options.as_ref().and_then(|o| o.as_object()).map_or(false, |m| !m.is_empty()) {
+                // Skip a fixture requesting stream options this runner does not support.
+                // labeledTrailerCounts (SPEC 8.4.1) IS supported; skip only if the options
+                // object carries any OTHER key.
+                if fix
+                    .options
+                    .as_ref()
+                    .and_then(|o| o.as_object())
+                    .map_or(false, |m| m.keys().any(|k| k != "labeledTrailerCounts"))
+                {
                     skipped += 1;
                     continue;
                 }
+                let labeled_trailer_counts = fix
+                    .options
+                    .as_ref()
+                    .and_then(|o| o.get("labeledTrailerCounts"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 let inp = fix.input.as_ref().unwrap();
                 let expected = match fix.expected.as_ref().and_then(|v| v.as_str()) {
                     Some(s) => s,
@@ -437,6 +449,7 @@ fn test_conformance_v2() {
                     tokens_used: inp["tokensUsed"].as_i64().unwrap_or(0),
                     pack_root: inp["packRoot"].as_str().unwrap_or("").to_string(),
                     session: inp["session"].as_bool().unwrap_or(false),
+                    labeled_trailer_counts,
                 };
                 let mut buf: Vec<u8> = Vec::new();
                 {

@@ -12,6 +12,11 @@ pub struct StreamOptions {
     pub tokens_used: i64,
     pub pack_root: String,
     pub session: bool,
+    /// Opt into the labeled trailer counts form (SPEC §8.4.1): when true, the
+    /// `##! summary` trailer emits `counts=label:count` (e.g. `targets:1,related:1,edges:1`)
+    /// instead of the default positional `counts=1,1,1`. Default false is byte-identical
+    /// to prior output.
+    pub labeled_trailer_counts: bool,
 }
 
 /// StreamEncoder writes GCF output incrementally as symbols and edges arrive.
@@ -21,6 +26,8 @@ pub struct StreamOptions {
 /// Thread-safe via internal Mutex.
 pub struct StreamEncoder<W: Write> {
     inner: Mutex<StreamEncoderInner<W>>,
+    /// Labeled trailer counts opt-in (SPEC §8.4.1). Immutable after construction.
+    labeled: bool,
 }
 
 struct StreamEncoderInner<W: Write> {
@@ -62,6 +69,7 @@ impl<W: Write> StreamEncoder<W> {
                 edge_count: 0,
                 edges_started: false,
             }),
+            labeled: opts.labeled_trailer_counts,
         }
     }
 
@@ -162,25 +170,36 @@ impl<W: Write> StreamEncoder<W> {
     /// Emit ##! summary trailer with final counts.
     pub fn close(&self) {
         let mut inner = self.inner.lock().unwrap();
-        let mut counts: Vec<String> = Vec::new();
 
-        for (_g, c) in &inner.group_counts {
+        // Build `label:count` sections, preserving group emission order.
+        let mut sections: Vec<String> = Vec::new();
+        for (g, c) in &inner.group_counts {
             if *c > 0 {
-                counts.push(c.to_string());
+                sections.push(format!("{}:{}", g, c));
             }
         }
         if inner.edge_count > 0 {
-            counts.push(inner.edge_count.to_string());
+            sections.push(format!("edges:{}", inner.edge_count));
         }
+
+        // Labeled form (SPEC §8.4.1): emit the `label:count` pairs as-is.
+        // Positional form (default): strip each pair to its value.
+        let counts_str = if self.labeled {
+            sections.join(",")
+        } else {
+            sections
+                .iter()
+                .map(|s| s.rsplit(':').next().unwrap_or(s))
+                .collect::<Vec<_>>()
+                .join(",")
+        };
 
         let symbol_count = inner.next_id;
         let edge_count = inner.edge_count;
         writeln!(
             inner.w,
             "##! summary symbols={} edges={} counts={}",
-            symbol_count,
-            edge_count,
-            counts.join(",")
+            symbol_count, edge_count, counts_str
         )
         .unwrap();
     }
