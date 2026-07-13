@@ -579,6 +579,18 @@ fn parse_tabular_body_with_shared(
                 std::collections::HashSet::new();
             let mut inline_idx: usize = 0;
 
+            // Columns that carry a `^` marker cell in this row legitimately expect
+            // a `.field` body. Any other `.field` is an orphan (Section 16.5) unless
+            // its name contains `>` (the flatten-fallback attachment, Section 7.4.6.1.4).
+            let mut expected_att: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            for f in &traditional_att_fields {
+                expected_att.insert(f.clone());
+            }
+            for f in &inline_att_fields {
+                expected_att.insert(f.clone());
+            }
+
             while i < lines.len() {
                 let a_line = &lines[i];
                 let a_content = if a_line.starts_with(&format!("{}  ", ind)) {
@@ -594,6 +606,15 @@ fn parse_tabular_body_with_shared(
                     let rest = &a_content[1..];
                     let (att_name, after_name_raw) = parse_attachment_name(rest);
                     let after_name = after_name_raw.trim_start();
+
+                    // Orphan attachment: a `.field` with no matching `^` cell in this
+                    // row is only legitimate for a `>`-named field (Section 7.4.6.1.4).
+                    // Any other unmatched attachment is rejected rather than silently
+                    // injected as an undeclared extra field, which would decode to a
+                    // record no encoder produces (Section 16.5, lossless round-trip).
+                    if !expected_att.contains(&att_name) && !att_name.contains('>') {
+                        return Err(format!("orphan_attachment: {}", att_name));
+                    }
 
                     // Check duplicate.
                     if resolved_attachments.contains(&att_name) {
