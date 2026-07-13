@@ -198,3 +198,24 @@ fn yaml_10b() {
         serde_yaml::from_str(&yaml_str).unwrap_or(Value::Null)
     });
 }
+
+// YAML second 10 billion (seed band 11B-21B, non-overlapping with yaml_10b's
+// 1B-11B and yaml_to_1b's 0-999M). Brings the cumulative YAML coverage to ~21B.
+// FUZZ_SEED_OFFSET lets a resumable chunked driver run one seed slice at a time
+// (defaults to the start of the band, 11B, for a single-shot 10B run).
+#[test]
+fn yaml_10b_2() {
+    let iterations: usize = std::env::var("FUZZ_ITERATIONS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(10_000);
+    let seed_offset: usize = std::env::var("FUZZ_SEED_OFFSET")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(11_000_000_000);
+    run_parallel("YAML", iterations, seed_offset, |rng| {
+        let v = gen_value(rng, 0, 3);
+        let yaml_str = serde_yaml::to_string(&v).unwrap();
+        serde_yaml::from_str(&yaml_str).unwrap_or(Value::Null)
+    });
+}
