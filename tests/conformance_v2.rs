@@ -1,9 +1,10 @@
 //! Conformance tests for GCF v2.0 (133 fixtures).
 
 use gcf::{
-    decode_generic, decode_generic_delta, encode_generic, encode_generic_delta, generic_pack_root,
-    verify_generic_delta, Edge, GenericDeltaPayload, GenericDeltaSession, GenericSet,
-    Payload, ReanchorPolicy, StreamEncoder, StreamOptions, Symbol,
+    decode_generic, decode_generic_delta, encode_delta, encode_generic, encode_generic_delta,
+    encode_with_session, generic_pack_root, pack_root, pack_root_canonical_bytes,
+    verify_generic_delta, DeltaPayload, Edge, GenericDeltaPayload, GenericDeltaSession, GenericSet,
+    Payload, ReanchorPolicy, Session, StreamEncoder, StreamOptions, Symbol,
 };
 use serde_json::{Map, Value};
 use std::fs;
@@ -20,6 +21,10 @@ struct Fixture {
     #[serde(rename = "inputBase64")]
     input_base64: Option<String>,
     options: Option<Value>,
+    /// Captures fixture keys not modeled above (e.g. `calls`, `canonicalBytes`,
+    /// `base_snapshot`) so no operation is silently starved of its inputs.
+    #[serde(flatten)]
+    extra: serde_json::Map<String, Value>,
 }
 
 fn load_fixtures() -> Vec<(String, Fixture)> {
@@ -131,6 +136,76 @@ fn delta_from_value(v: &Value) -> GenericDeltaPayload {
     }
 }
 
+/// Build a graph Symbol vector from a fixture input's `symbols` array.
+fn symbols_from(v: &Value) -> Vec<Symbol> {
+    v["symbols"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .map(|sym| Symbol {
+            qualified_name: sym["qualifiedName"].as_str().unwrap_or("").to_string(),
+            kind: sym["kind"].as_str().unwrap_or("").to_string(),
+            score: sym["score"].as_f64().unwrap_or(0.0),
+            provenance: sym["provenance"].as_str().unwrap_or("").to_string(),
+            distance: sym["distance"].as_i64().unwrap_or(0) as i32,
+            signature: String::new(),
+            components: Default::default(),
+        })
+        .collect()
+}
+
+/// Build a graph Edge vector from a fixture input's `edges` array.
+fn edges_from(v: &Value) -> Vec<Edge> {
+    v["edges"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .map(|edge| Edge {
+            source: edge["source"].as_str().unwrap_or("").to_string(),
+            target: edge["target"].as_str().unwrap_or("").to_string(),
+            edge_type: edge["edgeType"].as_str().unwrap_or("").to_string(),
+            status: edge["status"].as_str().unwrap_or("").to_string(),
+        })
+        .collect()
+}
+
+/// Build a list of graph Symbols from a plain array of {qualifiedName, kind, score, provenance}
+/// (delta added/removed sections carry no distance).
+fn delta_symbols_from(v: &Value, key: &str) -> Vec<Symbol> {
+    v.get(key)
+        .and_then(|x| x.as_array())
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .map(|sym| Symbol {
+            qualified_name: sym["qualifiedName"].as_str().unwrap_or("").to_string(),
+            kind: sym["kind"].as_str().unwrap_or("").to_string(),
+            score: sym["score"].as_f64().unwrap_or(0.0),
+            provenance: sym["provenance"].as_str().unwrap_or("").to_string(),
+            distance: 0,
+            signature: String::new(),
+            components: Default::default(),
+        })
+        .collect()
+}
+
+fn delta_edges_from(v: &Value, key: &str) -> Vec<Edge> {
+    v.get(key)
+        .and_then(|x| x.as_array())
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .map(|edge| Edge {
+            source: edge["source"].as_str().unwrap_or("").to_string(),
+            target: edge["target"].as_str().unwrap_or("").to_string(),
+            edge_type: edge["edgeType"].as_str().unwrap_or("").to_string(),
+            status: String::new(),
+        })
+        .collect()
+}
+
 #[test]
 fn test_conformance_v2() {
     let fixtures = load_fixtures();
@@ -156,13 +231,6 @@ fn test_conformance_v2() {
     let mut failed = 0;
 
     for (rel_path, fix) in &fixtures {
-        match fix.operation.as_str() {
-            "session" | "delta" => {
-                skipped += 1;
-                continue;
-            }
-            _ => {}
-        }
         if fix.input_base64.is_some() {
             skipped += 1;
             continue;
@@ -543,8 +611,174 @@ fn test_conformance_v2() {
                     passed += 1;
                 }
             }
-            _ => {
+            "pack-root" => {
+                // Graph pack root: content-addressed sha256 of the canonical snapshot.
+                let inp = fix.input.as_ref().unwrap();
+                let symbols = symbols_from(inp);
+                let edges = edges_from(inp);
+                let exp = fix.expected.as_ref().and_then(|v| v.as_str()).unwrap();
+                // If the fixture carries the exact pre-hash bytes, verify them too so
+                // any divergence is caught before the hash rather than only in the digest.
+                if let Some(exp_bytes) = fix
+                    .extra
+                    .get("canonicalBytes")
+                    .and_then(|v| v.as_str())
+                {
+                    let got_bytes = pack_root_canonical_bytes(&symbols, &edges);
+                    if got_bytes != exp_bytes {
+                        eprintln!(
+                            "FAIL {}: pack-root canonicalBytes mismatch\n  got: {:?}\n  exp: {:?}",
+                            rel_path, got_bytes, exp_bytes
+                        );
+                        failed += 1;
+                        continue;
+                    }
+                }
+                let got = pack_root(&symbols, &edges);
+                if got != exp {
+                    eprintln!(
+                        "FAIL {}: pack-root mismatch\n  got: {}\n  exp: {}",
+                        rel_path, got, exp
+                    );
+                    failed += 1;
+                } else {
+                    passed += 1;
+                }
+            }
+            "roundtrip" => {
+                let input = match fix.input.as_ref() {
+                    Some(v) => v,
+                    None => {
+                        skipped += 1;
+                        continue;
+                    }
+                };
+                let encoded = encode_generic(input);
+                // If expected is a string, verify the encoded output matches it.
+                if let Some(Value::String(exp)) = fix.expected.as_ref() {
+                    if &encoded != exp {
+                        eprintln!(
+                            "FAIL {}: roundtrip encode mismatch\n  got: {:?}\n  exp: {:?}",
+                            rel_path, encoded, exp
+                        );
+                        failed += 1;
+                        continue;
+                    }
+                }
+                // Verify round-trip: decode(encode(input)) == input.
+                match decode_generic(&encoded) {
+                    Ok(decoded) => {
+                        if !structural_equal(input, &decoded) {
+                            eprintln!(
+                                "FAIL {}: roundtrip mismatch\n  input: {}\n  decoded: {}",
+                                rel_path, input, decoded
+                            );
+                            failed += 1;
+                        } else {
+                            passed += 1;
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("FAIL {}: roundtrip decode error: {}", rel_path, e);
+                        failed += 1;
+                    }
+                }
+            }
+            "session" => {
+                // A single Session carries state across all calls.
+                let calls = fix
+                    .extra
+                    .get("calls")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                let session = Session::new();
+                let mut ok = true;
+                for (i, call) in calls.iter().enumerate() {
+                    let inp = &call["input"];
+                    let payload = Payload {
+                        tool: inp["tool"].as_str().unwrap_or("").to_string(),
+                        token_budget: 0,
+                        tokens_used: 0,
+                        pack_root: String::new(),
+                        symbols: symbols_from(inp),
+                        edges: edges_from(inp),
+                    };
+                    let got = encode_with_session(&payload, &session);
+                    let exp = call["expected"].as_str().unwrap_or("");
+                    if got != exp {
+                        eprintln!(
+                            "FAIL {}: session call {} mismatch\n  got: {:?}\n  exp: {:?}",
+                            rel_path,
+                            i + 1,
+                            got,
+                            exp
+                        );
+                        ok = false;
+                    }
+                }
+                if ok {
+                    passed += 1;
+                } else {
+                    failed += 1;
+                }
+            }
+            "delta" => {
+                // graph-delta fixtures share the "delta" operation but come in two
+                // shapes: an ENCODE scenario (input is a DeltaPayload struct) and a
+                // VERIFY scenario (input is a pre-encoded wire string, with
+                // base_snapshot present). The verify shape needs the graph delta wire
+                // decoder, which is not yet implemented, so route it to the same
+                // allow-listed skip as delta-verify.
+                let is_verify_shape = matches!(fix.input.as_ref(), Some(Value::String(_)))
+                    || fix.extra.contains_key("base_snapshot");
+                if is_verify_shape {
+                    eprintln!(
+                        "SKIP {}: delta-verify: graph delta wire decoder not yet implemented",
+                        rel_path
+                    );
+                    skipped += 1;
+                    continue;
+                }
+                let inp = fix.input.as_ref().unwrap();
+                let full_tokens = inp.get("fullTokens").and_then(|x| x.as_i64()).unwrap_or(0);
+                let delta_tokens = inp.get("deltaTokens").and_then(|x| x.as_i64()).unwrap_or(0);
+                let d = DeltaPayload {
+                    tool: inp["tool"].as_str().unwrap_or("").to_string(),
+                    base_root: inp["baseRoot"].as_str().unwrap_or("").to_string(),
+                    new_root: inp["newRoot"].as_str().unwrap_or("").to_string(),
+                    removed: delta_symbols_from(inp, "removed"),
+                    added: delta_symbols_from(inp, "added"),
+                    removed_edges: delta_edges_from(inp, "removedEdges"),
+                    added_edges: delta_edges_from(inp, "addedEdges"),
+                    delta_tokens,
+                    full_tokens,
+                };
+                let exp = fix.expected.as_ref().and_then(|v| v.as_str()).unwrap();
+                let got = encode_delta(&d);
+                if got != exp {
+                    eprintln!(
+                        "FAIL {}: delta encode mismatch\n  got: {:?}\n  exp: {:?}",
+                        rel_path, got, exp
+                    );
+                    failed += 1;
+                } else {
+                    passed += 1;
+                }
+            }
+            "delta-verify" => {
+                // Graph delta wire decoder not yet implemented in rust.
+                eprintln!(
+                    "SKIP {}: delta-verify: graph delta wire decoder not yet implemented",
+                    rel_path
+                );
                 skipped += 1;
+            }
+            op => {
+                panic!(
+                    "unhandled operation {:?}; must be handled or explicitly allow-listed",
+                    op
+                );
             }
         }
     }

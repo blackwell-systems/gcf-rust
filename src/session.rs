@@ -52,6 +52,12 @@ impl Session {
         }
     }
 
+    /// Returns the next session ID that would be assigned, without consuming it.
+    pub fn next_id(&self) -> usize {
+        let inner = self.inner.lock().unwrap();
+        inner.next_id
+    }
+
     /// Returns the number of symbols tracked in this session.
     pub fn size(&self) -> usize {
         let inner = self.inner.lock().unwrap();
@@ -100,44 +106,47 @@ fn group_by_distance(symbols: &[Symbol]) -> Vec<DistanceGroup> {
 pub fn encode_with_session(p: &Payload, sess: &Session) -> String {
     let mut b = String::new();
 
-    // Build local ID mapping for this response.
-    let mut local_index: HashMap<&str, usize> = HashMap::new();
-    for (i, s) in p.symbols.iter().enumerate() {
-        local_index.insert(&s.qualified_name, i);
-    }
-
-    // Count valid edges.
-    let valid_edges = p
-        .edges
-        .iter()
-        .filter(|e| {
-            local_index.contains_key(e.source.as_str())
-                && local_index.contains_key(e.target.as_str())
-        })
-        .count();
-
-    // Header with session=true marker.
-    write!(
-        b,
-        "GCF profile=graph tool={} budget={} tokens={} symbols={} edges={} session=true",
-        p.tool,
-        p.token_budget,
-        p.tokens_used,
-        p.symbols.len(),
-        valid_edges
-    )
-    .unwrap();
-    if !p.pack_root.is_empty() {
-        write!(b, " pack_root={}", p.pack_root).unwrap();
-    }
-    b.push('\n');
-
-    // Track which symbols are new.
+    // Track which symbols are new (need a full declaration).
     let is_new: Vec<bool> = p
         .symbols
         .iter()
         .map(|s| !sess.transmitted(&s.qualified_name))
         .collect();
+
+    // Header with session=true marker. budget/tokens/edges are emitted only when
+    // present, matching the reference encoder.
+    write!(b, "GCF profile=graph tool={}", p.tool).unwrap();
+    if p.token_budget > 0 {
+        write!(b, " budget={}", p.token_budget).unwrap();
+    }
+    if p.tokens_used > 0 {
+        write!(b, " tokens={}", p.tokens_used).unwrap();
+    }
+    write!(b, " symbols={}", p.symbols.len()).unwrap();
+    if !p.edges.is_empty() {
+        write!(b, " edges={}", p.edges.len()).unwrap();
+    }
+    write!(b, " session=true").unwrap();
+    if !p.pack_root.is_empty() {
+        write!(b, " pack_root={}", p.pack_root).unwrap();
+    }
+    b.push('\n');
+
+    // Build ID mapping using session-stable IDs. Known symbols keep their prior
+    // session ID; new symbols get the next available session IDs in order.
+    let mut local_index: HashMap<&str, usize> = HashMap::new();
+    for s in &p.symbols {
+        if let Some(id) = sess.get_id(&s.qualified_name) {
+            local_index.insert(&s.qualified_name, id);
+        }
+    }
+    let mut next_new = sess.next_id();
+    for s in &p.symbols {
+        if !local_index.contains_key(s.qualified_name.as_str()) {
+            local_index.insert(&s.qualified_name, next_new);
+            next_new += 1;
+        }
+    }
 
     // Group by distance.
     let groups = group_by_distance(&p.symbols);
@@ -172,7 +181,7 @@ pub fn encode_with_session(p: &Payload, sess: &Session) -> String {
 
     // Edges section.
     if !p.edges.is_empty() {
-        writeln!(b, "## edges [{}]", valid_edges).unwrap();
+        writeln!(b, "## edges [{}]", p.edges.len()).unwrap();
         for e in &p.edges {
             let src_idx = local_index.get(e.source.as_str());
             let tgt_idx = local_index.get(e.target.as_str());
