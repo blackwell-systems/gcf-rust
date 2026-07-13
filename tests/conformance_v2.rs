@@ -687,11 +687,7 @@ fn test_conformance_v2() {
                 let exp = fix.expected.as_ref().and_then(|v| v.as_str()).unwrap();
                 // If the fixture carries the exact pre-hash bytes, verify them too so
                 // any divergence is caught before the hash rather than only in the digest.
-                if let Some(exp_bytes) = fix
-                    .extra
-                    .get("canonicalBytes")
-                    .and_then(|v| v.as_str())
-                {
+                if let Some(exp_bytes) = fix.extra.get("canonicalBytes").and_then(|v| v.as_str()) {
                     let got_bytes = pack_root_canonical_bytes(&symbols, &edges);
                     if got_bytes != exp_bytes {
                         eprintln!(

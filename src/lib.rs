@@ -54,12 +54,12 @@ pub use decode_generic::decode_generic;
 pub use delta::{decode_delta, encode_delta, verify_delta};
 pub use encode::encode;
 pub use generic::{encode_generic, encode_generic_with_options, GenericOptions};
-pub use packroot::{pack_root, pack_root_canonical_bytes};
 pub use generic_delta::{
     canonical_cell, decode_generic_delta, decode_generic_full, diff_generic_sets,
     encode_generic_delta, encode_generic_full, generic_pack_root, verify_generic_delta,
     GenericDeltaPayload, GenericDeltaSession, GenericSet, ReanchorPolicy, DEFAULT_REANCHOR_N,
 };
+pub use packroot::{pack_root, pack_root_canonical_bytes};
 pub use session::{encode_with_session, Session};
 pub use stream::{StreamEncoder, StreamOptions};
 pub use stream_generic::GenericStreamEncoder;

@@ -17,9 +17,11 @@ fn group_by_distance(symbols: &[Symbol]) -> Vec<DistanceGroup> {
     // reference so symbol local IDs are assigned in canonical output order.
     let mut sorted: Vec<Symbol> = symbols.to_vec();
     sorted.sort_by(|a, b| {
-        a.distance
-            .cmp(&b.distance)
-            .then_with(|| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal))
+        a.distance.cmp(&b.distance).then_with(|| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
     });
     let mut groups: Vec<DistanceGroup> = Vec::new();
     for s in sorted {
@@ -114,7 +116,10 @@ pub fn encode(p: &Payload) -> String {
             .edges
             .iter()
             .filter_map(|e| {
-                match (sym_index.get(e.source.as_str()), sym_index.get(e.target.as_str())) {
+                match (
+                    sym_index.get(e.source.as_str()),
+                    sym_index.get(e.target.as_str()),
+                ) {
                     (Some(&si), Some(&ti)) => Some((si, ti, e)),
                     _ => None,
                 }
