@@ -178,9 +178,11 @@ impl<W: Write> StreamEncoder<W> {
                 sections.push(format!("{}:{}", g, c));
             }
         }
-        if inner.edge_count > 0 {
-            sections.push(format!("edges:{}", inner.edge_count));
-        }
+        // The edge count is always the last counts entry, even when 0 (SPEC §8.4,
+        // §8.4.1): it keeps the positional form unambiguous and anchors the labeled
+        // form (minimal counts=edges:0). Zero-count distance groups are omitted, but
+        // edges is not.
+        sections.push(format!("edges:{}", inner.edge_count));
 
         // Labeled form (SPEC §8.4.1): emit the `label:count` pairs as-is.
         // Positional form (default): strip each pair to its value.
