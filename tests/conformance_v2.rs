@@ -3,7 +3,7 @@
 use gcf::{
     decode_generic, decode_generic_delta, encode_generic, encode_generic_delta, generic_pack_root,
     verify_generic_delta, Edge, GenericDeltaPayload, GenericDeltaSession, GenericSet,
-    ReanchorPolicy, StreamEncoder, StreamOptions, Symbol,
+    Payload, ReanchorPolicy, StreamEncoder, StreamOptions, Symbol,
 };
 use serde_json::{Map, Value};
 use std::fs;
@@ -182,8 +182,53 @@ fn test_conformance_v2() {
                     }
                 };
                 if expected_str.starts_with("GCF profile=graph") {
-                    skipped += 1;
-                    continue; // Graph encode handled separately
+                    // Buffered graph encode (distinct from generic encode and the
+                    // streaming encoder). Build a graph Payload and compare bytes.
+                    let inp = match fix.input.as_ref() {
+                        Some(v) => v,
+                        None => {
+                            skipped += 1;
+                            continue;
+                        }
+                    };
+                    let mut payload = Payload {
+                        tool: inp["tool"].as_str().unwrap_or("").to_string(),
+                        token_budget: inp["tokenBudget"].as_i64().unwrap_or(0),
+                        tokens_used: inp["tokensUsed"].as_i64().unwrap_or(0),
+                        pack_root: inp["packRoot"].as_str().unwrap_or("").to_string(),
+                        symbols: Vec::new(),
+                        edges: Vec::new(),
+                    };
+                    for sym in inp["symbols"].as_array().cloned().unwrap_or_default() {
+                        payload.symbols.push(Symbol {
+                            qualified_name: sym["qualifiedName"].as_str().unwrap_or("").to_string(),
+                            kind: sym["kind"].as_str().unwrap_or("").to_string(),
+                            score: sym["score"].as_f64().unwrap_or(0.0),
+                            provenance: sym["provenance"].as_str().unwrap_or("").to_string(),
+                            distance: sym["distance"].as_i64().unwrap_or(0) as i32,
+                            signature: String::new(),
+                            components: Default::default(),
+                        });
+                    }
+                    for edge in inp["edges"].as_array().cloned().unwrap_or_default() {
+                        payload.edges.push(Edge {
+                            source: edge["source"].as_str().unwrap_or("").to_string(),
+                            target: edge["target"].as_str().unwrap_or("").to_string(),
+                            edge_type: edge["edgeType"].as_str().unwrap_or("").to_string(),
+                            status: edge["status"].as_str().unwrap_or("").to_string(),
+                        });
+                    }
+                    let got = gcf::encode(&payload);
+                    if got != expected_str {
+                        eprintln!(
+                            "FAIL {}: graph-encode mismatch\n  got: {:?}\n  exp: {:?}",
+                            rel_path, got, expected_str
+                        );
+                        failed += 1;
+                    } else {
+                        passed += 1;
+                    }
+                    continue;
                 }
                 let input = match fix.input.as_ref() {
                     Some(v) => v,

@@ -12,15 +12,24 @@ fn group_by_distance(symbols: &[Symbol]) -> Vec<DistanceGroup> {
     if symbols.is_empty() {
         return Vec::new();
     }
+    // Sort by distance ascending, then score descending within each group
+    // (stable sort preserves input order for equal keys), mirroring the Go
+    // reference so symbol local IDs are assigned in canonical output order.
+    let mut sorted: Vec<Symbol> = symbols.to_vec();
+    sorted.sort_by(|a, b| {
+        a.distance
+            .cmp(&b.distance)
+            .then_with(|| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal))
+    });
     let mut groups: Vec<DistanceGroup> = Vec::new();
-    for s in symbols {
+    for s in sorted {
         if groups.is_empty() || groups.last().unwrap().distance != s.distance {
             groups.push(DistanceGroup {
                 distance: s.distance,
                 symbols: Vec::new(),
             });
         }
-        groups.last_mut().unwrap().symbols.push(s.clone());
+        groups.last_mut().unwrap().symbols.push(s);
     }
     groups
 }
@@ -29,10 +38,17 @@ fn group_by_distance(symbols: &[Symbol]) -> Vec<DistanceGroup> {
 pub fn encode(p: &Payload) -> String {
     let mut b = String::new();
 
-    // Build symbol index for edge references.
+    // Group symbols by distance (sorted by score descending within each group).
+    let groups = group_by_distance(&p.symbols);
+
+    // Build symbol index AFTER sorting, so IDs are sequential in output order.
     let mut sym_index: HashMap<&str, usize> = HashMap::new();
-    for (i, s) in p.symbols.iter().enumerate() {
-        sym_index.insert(&s.qualified_name, i);
+    let mut next_id = 0usize;
+    for g in &groups {
+        for s in &g.symbols {
+            sym_index.insert(&s.qualified_name, next_id);
+            next_id += 1;
+        }
     }
 
     // Count valid edges (both endpoints in symbol index).
@@ -45,23 +61,22 @@ pub fn encode(p: &Payload) -> String {
         .count();
 
     // Header line.
-    write!(
-        b,
-        "GCF profile=graph tool={} budget={} tokens={} symbols={} edges={}",
-        p.tool,
-        p.token_budget,
-        p.tokens_used,
-        p.symbols.len(),
-        valid_edges
-    )
-    .unwrap();
+    write!(b, "GCF profile=graph tool={}", p.tool).unwrap();
+    if p.token_budget > 0 {
+        write!(b, " budget={}", p.token_budget).unwrap();
+    }
+    if p.tokens_used > 0 {
+        write!(b, " tokens={}", p.tokens_used).unwrap();
+    }
+    write!(b, " symbols={}", p.symbols.len()).unwrap();
+    if valid_edges > 0 {
+        write!(b, " edges={}", valid_edges).unwrap();
+    }
     if !p.pack_root.is_empty() {
         write!(b, " pack_root={}", p.pack_root).unwrap();
     }
     b.push('\n');
 
-    // Group symbols by distance.
-    let groups = group_by_distance(&p.symbols);
     let group_names = ["targets", "related", "extended"];
 
     for g in &groups {
@@ -90,16 +105,32 @@ pub fn encode(p: &Payload) -> String {
     // Edges section.
     if !p.edges.is_empty() {
         writeln!(b, "## edges [{}]", valid_edges).unwrap();
-        for e in &p.edges {
-            let src_idx = sym_index.get(e.source.as_str());
-            let tgt_idx = sym_index.get(e.target.as_str());
-            if let (Some(&si), Some(&ti)) = (src_idx, tgt_idx) {
-                write!(b, "@{}<@{} {}", ti, si, e.edge_type).unwrap();
-                if !e.status.is_empty() && e.status != "unchanged" {
-                    write!(b, " {}", e.status).unwrap();
+        // Resolve valid edges (both endpoints in symbol index), then order by
+        // source ID then target ID (SPEC 16.1), with edge type breaking ties for
+        // parallel edges. Reordering is decode-invariant (edges are a set) and does
+        // not affect pack_root (which sorts edge records independently). Stable sort
+        // preserves input order for fully-equal edges.
+        let mut resolved: Vec<(usize, usize, &crate::types::Edge)> = p
+            .edges
+            .iter()
+            .filter_map(|e| {
+                match (sym_index.get(e.source.as_str()), sym_index.get(e.target.as_str())) {
+                    (Some(&si), Some(&ti)) => Some((si, ti, e)),
+                    _ => None,
                 }
-                b.push('\n');
+            })
+            .collect();
+        resolved.sort_by(|a, b| {
+            a.0.cmp(&b.0)
+                .then(a.1.cmp(&b.1))
+                .then(a.2.edge_type.cmp(&b.2.edge_type))
+        });
+        for (si, ti, e) in &resolved {
+            write!(b, "@{}<@{} {}", ti, si, e.edge_type).unwrap();
+            if !e.status.is_empty() && e.status != "unchanged" {
+                write!(b, " {}", e.status).unwrap();
             }
+            b.push('\n');
         }
     }
 
