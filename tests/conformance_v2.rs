@@ -1,10 +1,11 @@
 //! Conformance tests for GCF v2.0 (133 fixtures).
 
 use gcf::{
-    decode_generic, decode_generic_delta, encode_delta, encode_generic, encode_generic_delta,
-    encode_with_session, generic_pack_root, pack_root, pack_root_canonical_bytes,
-    verify_generic_delta, DeltaPayload, Edge, GenericDeltaPayload, GenericDeltaSession, GenericSet,
-    Payload, ReanchorPolicy, Session, StreamEncoder, StreamOptions, Symbol,
+    decode_delta, decode_generic, decode_generic_delta, encode_delta, encode_generic,
+    encode_generic_delta, encode_with_session, generic_pack_root, pack_root,
+    pack_root_canonical_bytes, verify_delta, verify_generic_delta, DeltaPayload, Edge,
+    GenericDeltaPayload, GenericDeltaSession, GenericSet, Payload, ReanchorPolicy, Session,
+    StreamEncoder, StreamOptions, Symbol,
 };
 use serde_json::{Map, Value};
 use std::fs;
@@ -204,6 +205,73 @@ fn delta_edges_from(v: &Value, key: &str) -> Vec<Edge> {
             status: String::new(),
         })
         .collect()
+}
+
+/// Run a graph-delta verify scenario: decode the wire, apply it to `base_snapshot`,
+/// and either assert the expected error or that the applied snapshot's pack_root
+/// matches `expected_snapshot`'s. Returns Ok(()) on pass, Err(message) on fail.
+fn run_delta_verify(
+    rel_path: &str,
+    wire: &str,
+    base: &Value,
+    expected_snapshot: Option<&Value>,
+    expected_error: Option<&String>,
+) -> Result<(), String> {
+    let base_symbols = symbols_from(base);
+    let base_edges = edges_from(base);
+    let decoded = match decode_delta(wire) {
+        Ok(d) => d,
+        Err(e) => {
+            return match expected_error {
+                Some(exp) if e.contains(exp) => Ok(()),
+                Some(exp) => Err(format!(
+                    "FAIL {}: wrong decode error\n  got: {}\n  expected: {}",
+                    rel_path, e, exp
+                )),
+                None => Err(format!("FAIL {}: unexpected decode error: {}", rel_path, e)),
+            };
+        }
+    };
+    let outcome = verify_delta(
+        &base_symbols,
+        &base_edges,
+        &decoded.removed,
+        &decoded.added,
+        &decoded.removed_edges,
+        &decoded.added_edges,
+        &decoded.new_root,
+    );
+    match (outcome, expected_error) {
+        (Ok((res_syms, res_edges)), None) => {
+            let exp = expected_snapshot
+                .ok_or_else(|| format!("FAIL {}: missing expected_snapshot", rel_path))?;
+            let got_root = pack_root(&res_syms, &res_edges);
+            let exp_root = pack_root(&symbols_from(exp), &edges_from(exp));
+            if got_root != exp_root {
+                Err(format!(
+                    "FAIL {}: applied root mismatch\n  got: {}\n  exp: {}",
+                    rel_path, got_root, exp_root
+                ))
+            } else {
+                Ok(())
+            }
+        }
+        (Ok(_), Some(exp_err)) => Err(format!(
+            "FAIL {}: expected error '{}', got success",
+            rel_path, exp_err
+        )),
+        (Err(e), Some(exp_err)) => {
+            if e.contains(exp_err) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "FAIL {}: wrong error\n  got: {}\n  expected: {}",
+                    rel_path, e, exp_err
+                ))
+            }
+        }
+        (Err(e), None) => Err(format!("FAIL {}: unexpected error: {}", rel_path, e)),
+    }
 }
 
 #[test]
@@ -727,17 +795,34 @@ fn test_conformance_v2() {
                 // graph-delta fixtures share the "delta" operation but come in two
                 // shapes: an ENCODE scenario (input is a DeltaPayload struct) and a
                 // VERIFY scenario (input is a pre-encoded wire string, with
-                // base_snapshot present). The verify shape needs the graph delta wire
-                // decoder, which is not yet implemented, so route it to the same
-                // allow-listed skip as delta-verify.
+                // base_snapshot present). The verify shape decodes the wire, applies
+                // it to base_snapshot, and checks the resulting pack_root.
                 let is_verify_shape = matches!(fix.input.as_ref(), Some(Value::String(_)))
                     || fix.extra.contains_key("base_snapshot");
                 if is_verify_shape {
-                    eprintln!(
-                        "SKIP {}: delta-verify: graph delta wire decoder not yet implemented",
-                        rel_path
-                    );
-                    skipped += 1;
+                    let wire = match fix.input.as_ref() {
+                        Some(Value::String(s)) => s.as_str(),
+                        _ => {
+                            eprintln!("FAIL {}: delta verify shape missing wire string", rel_path);
+                            failed += 1;
+                            continue;
+                        }
+                    };
+                    let base = fix.extra.get("base_snapshot").unwrap();
+                    let expected_snapshot = fix.extra.get("expected_snapshot");
+                    match run_delta_verify(
+                        rel_path,
+                        wire,
+                        base,
+                        expected_snapshot,
+                        fix.expected_error.as_ref(),
+                    ) {
+                        Ok(()) => passed += 1,
+                        Err(msg) => {
+                            eprintln!("{}", msg);
+                            failed += 1;
+                        }
+                    }
                     continue;
                 }
                 let inp = fix.input.as_ref().unwrap();
@@ -767,12 +852,29 @@ fn test_conformance_v2() {
                 }
             }
             "delta-verify" => {
-                // Graph delta wire decoder not yet implemented in rust.
-                eprintln!(
-                    "SKIP {}: delta-verify: graph delta wire decoder not yet implemented",
-                    rel_path
-                );
-                skipped += 1;
+                let wire = match fix.input.as_ref() {
+                    Some(Value::String(s)) => s.as_str(),
+                    _ => {
+                        eprintln!("FAIL {}: delta-verify missing wire string", rel_path);
+                        failed += 1;
+                        continue;
+                    }
+                };
+                let base = fix.extra.get("base_snapshot").unwrap();
+                let expected_snapshot = fix.extra.get("expected_snapshot");
+                match run_delta_verify(
+                    rel_path,
+                    wire,
+                    base,
+                    expected_snapshot,
+                    fix.expected_error.as_ref(),
+                ) {
+                    Ok(()) => passed += 1,
+                    Err(msg) => {
+                        eprintln!("{}", msg);
+                        failed += 1;
+                    }
+                }
             }
             op => {
                 panic!(
