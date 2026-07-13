@@ -138,6 +138,18 @@ fn test_conformance_v2() {
         eprintln!("SKIP: conformance fixtures not found");
         return;
     }
+    // Floor assertion: a green run MUST have exercised the full shared suite. A
+    // present-but-short fixture set (mispathed or partial checkout) fails loudly
+    // rather than passing having verified almost nothing. A wholly-absent directory
+    // yields an empty vec and soft-skips above; in CI the separate gcf checkout step
+    // fails loudly if the repo cannot be cloned.
+    const MIN_FIXTURES: usize = 150;
+    assert!(
+        fixtures.len() >= MIN_FIXTURES,
+        "discovered only {} conformance fixtures, expected at least {}; the shared gcf fixture set is incomplete or mispathed",
+        fixtures.len(),
+        MIN_FIXTURES
+    );
 
     let mut passed = 0;
     let mut skipped = 0;
