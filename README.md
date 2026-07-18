@@ -11,7 +11,7 @@
 
 # gcf-rust
 
-Rust implementation of [GCF](https://gcformat.com/) -- the most token-efficient wire format for LLMs. A drop-in alternative to JSON and TOON for any structured data.
+Rust implementation of [GCF](https://gcformat.com/), the most token-efficient wire format for LLMs. A drop-in alternative to JSON and TOON for any structured data.
 
 <p align="center">
   <img src="assets/gcf-rust-diagram.png" alt="gcf-rust" width="80%">
@@ -25,7 +25,7 @@ Rust implementation of [GCF](https://gcformat.com/) -- the most token-efficient 
 
 2,500+ LLM evaluations. [Full benchmarks](https://gcformat.com/guide/benchmarks.html).
 
-Docs: [gcformat.com](https://gcformat.com/) | [Playground](https://gcformat.com/playground.html) | [GCF vs TOON](https://gcformat.com/guide/vs-toon.html)
+Docs: [gcformat.com](https://gcformat.com/) · [Playground](https://gcformat.com/playground.html) · [GCF vs TOON](https://gcformat.com/guide/vs-toon.html)
 
 ## Install
 
