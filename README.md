@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="assets/gcf-hero-wire-delta.png" alt="gcf-rust" width="760">
-</p>
-
-<p align="center">
   <a href="https://gcformat.com/playground.html"><img src="https://img.shields.io/badge/playground-live-2563eb?style=for-the-badge" alt="Playground"></a>
   <a href="https://gcformat.com/guide/benchmarks.html"><img src="https://img.shields.io/badge/benchmarks-2%2C500%2B%20evals-22c55e?style=for-the-badge" alt="Benchmarks"></a>
   <a href="https://crates.io/crates/gcf"><img src="https://img.shields.io/crates/v/gcf?style=for-the-badge&logo=rust&logoColor=white&color=E43717" alt="crates.io"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-333?style=for-the-badge" alt="License"></a>
+</p>
+
+<p align="center">
+  <img src="assets/gcf-hero-wire-delta.png" alt="gcf-rust" width="760">
 </p>
 
 # gcf-rust
@@ -14,7 +14,15 @@
 Rust implementation of [GCF](https://gcformat.com/), the most token-efficient wire format for LLMs. A drop-in alternative to JSON and TOON for any structured data.
 
 <p align="center">
+  <img src="assets/divider-wave-2.png" alt="" width="100%">
+</p>
+
+<p align="center">
   <img src="assets/gcf-rust-diagram.png" alt="gcf-rust" width="80%">
+</p>
+
+<p align="center">
+  <img src="assets/divider.png" alt="" width="100%">
 </p>
 
 **Built for the agentic loop, where the same structured context crosses the model boundary turn after turn.** A single payload is 50-92% smaller than JSON, but GCF also deduplicates repeated structure across turns and sends only deltas when context changes, so by the 5th overlapping call each response costs 99% fewer tokens than JSON, and a 10-call session runs 94.4% cheaper than re-sending JSON every turn. Session dedup and delta both need local IDs and a multi-turn design that neither JSON nor TOON has.
