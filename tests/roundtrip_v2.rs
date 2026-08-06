@@ -177,16 +177,21 @@ enum FlatShape {
     Nested(Vec<(String, FlatShape)>),
 }
 
-fn gen_flat_shape(rng: &mut Rng, depth: usize, max_depth: usize) -> FlatShape {
+fn gen_flat_shape(
+    rng: &mut Rng,
+    depth: usize,
+    max_depth: usize,
+    key_fn: fn(&mut Rng) -> String,
+) -> FlatShape {
     if depth >= max_depth || rng.float() < 0.45 {
         return FlatShape::Scalar;
     }
     let mut sub = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for _ in 0..1 + rng.int(3) as usize {
-        let k = gen_bare_key(rng);
+        let k = key_fn(rng);
         if seen.insert(k.clone()) {
-            sub.push((k, gen_flat_shape(rng, depth + 1, max_depth)));
+            sub.push((k, gen_flat_shape(rng, depth + 1, max_depth, key_fn)));
         }
     }
     if sub.is_empty() {
@@ -216,29 +221,34 @@ fn materialize_flat_shape(rng: &mut Rng, shape: &FlatShape) -> Value {
     }
 }
 
-fn gen_flattenable_array(rng: &mut Rng) -> Value {
+fn gen_flattenable_array(rng: &mut Rng, key_fn: fn(&mut Rng) -> String) -> Value {
     let mut schema: Vec<(String, FlatShape)> = vec![("id".to_string(), FlatShape::Scalar)];
     let mut seen = std::collections::HashSet::new();
     seen.insert("id".to_string());
     let mut has_nested = false;
     for _ in 0..1 + rng.int(3) as usize {
-        let k = gen_bare_key(rng);
+        let k = key_fn(rng);
         if !seen.insert(k.clone()) {
             continue;
         }
-        let s = gen_flat_shape(rng, 1, 3);
+        let s = gen_flat_shape(rng, 1, 3, key_fn);
         if !matches!(s, FlatShape::Scalar) {
             has_nested = true;
         }
         schema.push((k, s));
     }
     if !has_nested {
-        let k = gen_bare_key(rng);
-        let inner = FlatShape::Nested(vec![(
-            gen_bare_key(rng),
-            FlatShape::Nested(vec![(gen_bare_key(rng), FlatShape::Scalar)]),
-        )]);
-        schema.push((k, inner));
+        // Synthesize a nested field to force the flatten path. Adversarial key funcs
+        // collide often, so only insert if the key isn't already present (mirrors the
+        // Go SDK fallback dedup).
+        let k = key_fn(rng);
+        if seen.insert(k.clone()) {
+            let inner = FlatShape::Nested(vec![(
+                gen_bare_key(rng),
+                FlatShape::Nested(vec![(gen_bare_key(rng), FlatShape::Scalar)]),
+            )]);
+            schema.push((k, inner));
+        }
     }
     let rows = 2 + rng.int(6) as usize;
     let mut arr = Vec::with_capacity(rows);
@@ -268,7 +278,7 @@ fn test_flatten_roundtrip() {
     let iterations = get_iterations();
     let mut rng = Rng::new(7);
     for i in 0..iterations {
-        let val = gen_flattenable_array(&mut rng);
+        let val = gen_flattenable_array(&mut rng, gen_bare_key);
         let gcf = encode_generic(&val);
         let decoded = decode_generic(&gcf).unwrap_or_else(|e| {
             panic!(
@@ -285,6 +295,72 @@ fn test_flatten_roundtrip() {
             gcf
         );
     }
+}
+
+// Adversarial key alphabet: mixes the empty string and every arrangement of '>'
+// (the flatten path separator) with plain keys. The empty key and '>'-bearing keys
+// are exactly what the flatten-eligibility guard must exclude: an empty path segment
+// (leading/trailing/bare '>') the decoder cannot invert. Plain keys are included so
+// flatten still triggers.
+fn gen_adversarial_key(rng: &mut Rng) -> String {
+    const KEYS: &[&str] = &[
+        "", ">", ">>", "a>b", "a>", ">b", ">a>", "a>>b", "a", "b", "c", "id", "m", "n",
+    ];
+    KEYS[rng.int(KEYS.len() as u32) as usize].to_string()
+}
+
+// Same flatten round-trip as test_flatten_roundtrip, but with keys that include the
+// empty string and every arrangement of '>'. This exercises the empty-key exclusion in
+// analyze_flattenable (src/generic.rs): without it, an empty key produces a bare/leading/
+// trailing '>' path segment that the decoder cannot invert, silently corrupting the array.
+// The liveness assert confirms the generator actually produced the adversarial keys.
+#[test]
+fn test_flatten_roundtrip_adversarial_keys() {
+    let iterations = std::env::var("GCF_ITERATIONS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(200_000usize);
+    let mut rng = Rng::new(20260806);
+    let mut saw_empty = false;
+    let mut saw_gt = false;
+    for i in 0..iterations {
+        let val = gen_flattenable_array(&mut rng, gen_adversarial_key);
+        if let Value::Array(rows) = &val {
+            for row in rows {
+                if let Value::Object(m) = row {
+                    for k in m.keys() {
+                        if k.is_empty() {
+                            saw_empty = true;
+                        }
+                        if k.contains('>') {
+                            saw_gt = true;
+                        }
+                    }
+                }
+            }
+        }
+        let gcf = encode_generic(&val);
+        let decoded = decode_generic(&gcf).unwrap_or_else(|e| {
+            panic!(
+                "iteration {}: decode failed: {}\n  input: {}\n  gcf: {:?}",
+                i, e, val, gcf
+            );
+        });
+        assert!(
+            structural_equal(&val, &decoded),
+            "iteration {}: round-trip mismatch\n  input: {}\n  decoded: {}\n  gcf: {:?}",
+            i,
+            val,
+            decoded,
+            gcf
+        );
+    }
+    assert!(
+        saw_empty && saw_gt,
+        "generator liveness: expected to see empty ({}) and '>'-bearing ({}) top-level keys",
+        saw_empty,
+        saw_gt
+    );
 }
 
 #[test]
