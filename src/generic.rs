@@ -244,8 +244,8 @@ fn analyze_flattenable(
     parent_path: &str,
 ) -> Option<Vec<FlatLeaf>> {
     // Field names containing ">" cannot be flattened (would create ambiguous paths).
-    if field_name.contains('>') {
-        return None;
+    if field_name.is_empty() || field_name.contains('>') {
+        return None; // empty/'>' -> ambiguous path (SPEC 7.4.6.1.3)
     }
     let mut canonical_keys: Option<Vec<String>> = None;
     let mut canonical_shape: std::collections::HashMap<String, &'static str> =
@@ -300,8 +300,8 @@ fn analyze_flattenable(
             }
         } else {
             for k in &keys {
-                if k.contains('>') {
-                    return None;
+                if k.is_empty() || k.contains('>') {
+                    return None; // empty/'>' -> ambiguous path (SPEC 7.4.6.1.3)
                 }
                 let val = &obj[k];
                 if val.is_array() {
