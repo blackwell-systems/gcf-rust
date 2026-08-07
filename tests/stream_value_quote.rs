@@ -39,14 +39,26 @@ impl Write for SharedBuf {
 
 // String values that collide with a non-string token if emitted bare.
 const ADVERSARIAL: &[&str] = &[
-    "true", "false", // -> Bool
-    "123", "4.5", "-7", "0", "1e3", // -> Number
-    "-", "~", "^", // -> null / missing / attachment markers
-    "@x", "#x", ".x", // leading-special misparse
-    "", "a|b", "a,b", // delimiter collisions / empty
-    "a\"b", "a\\b", // quote / backslash escaping
+    "true",
+    "false", // -> Bool
+    "123",
+    "4.5",
+    "-7",
+    "0",
+    "1e3", // -> Number
+    "-",
+    "~",
+    "^", // -> null / missing / attachment markers
+    "@x",
+    "#x",
+    ".x", // leading-special misparse
+    "",
+    "a|b",
+    "a,b", // delimiter collisions / empty
+    "a\"b",
+    "a\\b",       // quote / backslash escaping
     "  spaced  ", // leading/trailing space
-    "plain", // control: stays bare
+    "plain",      // control: stays bare
 ];
 
 #[test]
@@ -82,7 +94,8 @@ fn stream_adversarial_string_values_roundtrip() {
     enc.close().expect("close");
 
     let wire = buf.into_string();
-    let decoded = decode_generic(&wire).unwrap_or_else(|e| panic!("decode failed: {e}\nwire:\n{wire}"));
+    let decoded =
+        decode_generic(&wire).unwrap_or_else(|e| panic!("decode failed: {e}\nwire:\n{wire}"));
 
     let want = {
         let mut m = Map::new();
@@ -103,7 +116,8 @@ fn stream_string_true_stays_string() {
     enc.close().expect("close");
 
     let wire = buf.into_string();
-    let decoded = decode_generic(&wire).unwrap_or_else(|e| panic!("decode failed: {e}\nwire:\n{wire}"));
+    let decoded =
+        decode_generic(&wire).unwrap_or_else(|e| panic!("decode failed: {e}\nwire:\n{wire}"));
 
     let val = decoded
         .get("rows")
@@ -130,7 +144,10 @@ fn stream_value_quote_liveness() {
     enc.close().expect("close");
 
     let wire = buf.into_string();
-    assert!(wire.contains("GCF profile=generic"), "missing profile header:\n{wire}");
+    assert!(
+        wire.contains("GCF profile=generic"),
+        "missing profile header:\n{wire}"
+    );
     assert!(wire.contains("## rows"), "missing array header:\n{wire}");
     // "123" is a numeric-looking string and must be quoted on the wire.
     assert!(

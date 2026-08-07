@@ -64,7 +64,7 @@ pub fn decode_generic(input: &str) -> Result<Value, String> {
             summary_line = trimmed.to_string();
             continue;
         }
-        if trimmed.starts_with("## ") && trimmed.contains("[?]") {
+        if trimmed.starts_with("## ") && (trimmed.contains("[?]") || trimmed.contains("[?:]")) {
             deferred_count += 1;
         }
         content_lines.push(line.to_string());
@@ -292,13 +292,32 @@ fn parse_array_from_header(
         return Err("invalid_count".into());
     }
     let close = bp.find(']').ok_or("invalid_count")?;
-    let count_str = &bp[1..close];
+    let mut count_str = &bp[1..close];
     let after = &bp[close + 1..];
+
+    // A keyed map (SPEC 7.2a) is marked by a `:` after the exact member count
+    // (`[N:]`). The colon lives inside the brackets, so it is part of count_str.
+    let keyed = count_str.ends_with(':');
+    if keyed {
+        count_str = &count_str[..count_str.len() - 1];
+        if !after.starts_with('{') {
+            return Err("keyed_map: missing field declaration".into());
+        }
+    }
+
     let count: i64 = if count_str == "?" {
         -1
     } else {
         parse_count(count_str)? as i64
     };
+
+    // A keyed map has at least one member; an empty object is encoded per
+    // Section 7.7, never as [0:] (SPEC 7.2a.4).
+    if keyed && count == 0 {
+        return Err(
+            "keyed_map: zero count [0:] is invalid (an empty object uses Section 7.7)".into(),
+        );
+    }
 
     if count == 0 && !after.starts_with('{') && !after.starts_with(':') {
         return Ok((Value::Array(vec![]), 1));
@@ -344,6 +363,10 @@ fn parse_array_from_header(
                 rows.len()
             ));
         }
+        if keyed {
+            let map = keyed_rows_to_map(rows, &fields)?;
+            return Ok((Value::Object(map), consumed + 1));
+        }
         return Ok((Value::Array(rows), consumed + 1));
     }
 
@@ -367,6 +390,39 @@ fn parse_tabular_body(
     expected_count: i64,
 ) -> Result<(Vec<Value>, usize), String> {
     parse_tabular_body_with_shared(lines, start, depth, fields, expected_count, None)
+}
+
+/// Reconstruct the map from decoded keyed-table rows (SPEC 7.2a.4): the first
+/// declared field is the member key column, discarded from the value object; the
+/// remaining fields form the value object. Rejects a header with fewer than two
+/// fields and duplicate member keys.
+fn keyed_rows_to_map(rows: Vec<Value>, fields: &[String]) -> Result<Map<String, Value>, String> {
+    if fields.len() < 2 {
+        return Err("keyed_map: header must declare at least two fields".into());
+    }
+    let key_label = &fields[0];
+    let mut out = Map::new();
+    for r in rows {
+        let mut row = match r {
+            Value::Object(m) => m,
+            _ => return Err("keyed_map: row is not an object".into()),
+        };
+        // Cell 0 always populates the key column (a JSON key is a string, and the
+        // Section 2.4 quoting obligation forces cell 0 to round-trip as a string),
+        // so a missing key label indicates a malformed row.
+        let key_val = row
+            .remove(key_label)
+            .ok_or_else(|| format!("keyed_map: row missing key column {}", key_label))?;
+        let ks = match key_val {
+            Value::String(s) => s,
+            other => other.to_string(),
+        };
+        if out.contains_key(&ks) {
+            return Err(format!("keyed_map: duplicate member key {}", ks));
+        }
+        out.insert(ks, Value::Object(row));
+    }
+    Ok(out)
 }
 
 /// Unflatten path columns into nested objects.
@@ -1052,7 +1108,7 @@ fn validate_summary_counts(
     let mut current_count = 0;
     for line in content_lines {
         let trimmed = line.trim_start();
-        if trimmed.starts_with("## ") && trimmed.contains("[?]") {
+        if trimmed.starts_with("## ") && (trimmed.contains("[?]") || trimmed.contains("[?:]")) {
             if in_deferred {
                 actual_counts.push(current_count);
             }

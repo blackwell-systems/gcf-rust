@@ -18,10 +18,7 @@ use std::rc::Rc;
 fn buffered_roundtrip(field: &str) {
     // A uniform array of objects keyed by the multibyte field name forces the
     // tabular header with the quoted field declaration.
-    let arr = Value::Array(vec![
-        json!({ field: 1 }),
-        json!({ field: 2 }),
-    ]);
+    let arr = Value::Array(vec![json!({ field: 1 }), json!({ field: 2 })]);
     let mut top = Map::new();
     top.insert("rows".to_string(), arr);
     let input = Value::Object(top);
@@ -29,7 +26,10 @@ fn buffered_roundtrip(field: &str) {
     let wire = encode_generic(&input);
     let decoded = decode_generic(&wire)
         .unwrap_or_else(|e| panic!("decode failed for field {field:?}: {e}\nwire:\n{wire}"));
-    assert_eq!(decoded, input, "round-trip mismatch for field {field:?}\nwire:\n{wire}");
+    assert_eq!(
+        decoded, input,
+        "round-trip mismatch for field {field:?}\nwire:\n{wire}"
+    );
 }
 
 #[test]
@@ -80,5 +80,8 @@ fn streaming_multibyte_field_name_roundtrips() {
         .unwrap_or_else(|e| panic!("streaming decode failed: {e}\nwire:\n{wire}"));
 
     let want = json!({ "rows": [ { field: 1 }, { field: 2 } ] });
-    assert_eq!(decoded, want, "streaming round-trip mismatch\nwire:\n{wire}");
+    assert_eq!(
+        decoded, want,
+        "streaming round-trip mismatch\nwire:\n{wire}"
+    );
 }

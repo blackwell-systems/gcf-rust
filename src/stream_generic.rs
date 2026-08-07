@@ -185,6 +185,43 @@ impl<W: Write> GenericStreamEncoder<W> {
         });
     }
 
+    /// Start a keyed-map section with deferred count `[?:]` (SPEC 7.2a).
+    ///
+    /// `key_label` is the key column; `value_fields` are the value-object fields.
+    /// Each subsequent `write_row` value slice is `[key_value, ...value_fields]`.
+    /// The section name and each field name are quoted per Section 2.4 (via
+    /// `format_key`). A value field name containing '>' is a flattened path that
+    /// a flat streaming row cannot represent (SPEC 8.3, 7.4.6); it is rejected
+    /// and the error is surfaced at `close()`.
+    pub fn begin_keyed_map(&self, name: &str, key_label: &str, value_fields: &[&str]) {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.error.is_some() {
+            return;
+        }
+        if inner.current.is_some() {
+            Self::end_array_locked(&mut inner);
+        }
+        for f in value_fields {
+            if f.contains('>') {
+                inner.error = Some(format!(
+                    "streaming field name {:?} contains '>' (a flattened path is not representable in a streaming row)",
+                    f
+                ));
+                return;
+            }
+        }
+        let mut fields: Vec<&str> = Vec::with_capacity(value_fields.len() + 1);
+        fields.push(key_label);
+        fields.extend_from_slice(value_fields);
+        let fields_str = format_field_decl(&fields);
+        writeln!(inner.w, "## {} [?:]{{{}}}", format_key(name), fields_str).unwrap();
+        inner.current = Some(ActiveArray {
+            name: name.to_string(),
+            fields: fields.iter().map(|s| s.to_string()).collect(),
+            count: 0,
+        });
+    }
+
     /// Emit a single pipe-separated row immediately.
     pub fn write_row(&self, values: &[GcfValue]) {
         let mut inner = self.inner.lock().unwrap();

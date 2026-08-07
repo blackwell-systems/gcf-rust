@@ -28,7 +28,13 @@ pub fn encode_generic_with_options(data: &Value, opts: &GenericOptions) -> Strin
 fn encode_root_value(v: &Value, out: &mut String, opts: &GenericOptions) {
     match v {
         Value::Null => out.push_str("=-\n"),
-        Value::Object(map) => encode_object(map, out, 0, opts),
+        Value::Object(map) => {
+            if let Some(km) = keyed_map_eligible(map) {
+                encode_keyed_map(&keyed_header_prefix("", false, 0), &km, out, 0, opts);
+            } else {
+                encode_object(map, out, 0, opts);
+            }
+        }
         Value::Array(arr) => encode_root_array(arr, out, opts),
         Value::Bool(b) => {
             out.push('=');
@@ -59,11 +65,21 @@ fn encode_object(
         let fk = format_key(key);
         match value {
             Value::Object(sub) => {
-                out.push_str(&prefix);
-                out.push_str("## ");
-                out.push_str(&fk);
-                out.push('\n');
-                encode_object(sub, out, depth + 1, opts);
+                if let Some(km) = keyed_map_eligible(sub) {
+                    encode_keyed_map(
+                        &keyed_header_prefix(key, true, depth),
+                        &km,
+                        out,
+                        depth,
+                        opts,
+                    );
+                } else {
+                    out.push_str(&prefix);
+                    out.push_str("## ");
+                    out.push_str(&fk);
+                    out.push('\n');
+                    encode_object(sub, out, depth + 1, opts);
+                }
             }
             Value::Array(arr) => encode_named_array(&fk, arr, out, depth, opts),
             _ => {
@@ -424,6 +440,19 @@ fn encode_tabular(
     depth: usize,
     opts: &GenericOptions,
 ) {
+    encode_tabular_inner(header_prefix, arr, fields, out, depth, opts, false);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn encode_tabular_inner(
+    header_prefix: &str,
+    arr: &[Value],
+    fields: &[String],
+    out: &mut String,
+    depth: usize,
+    opts: &GenericOptions,
+    keyed: bool,
+) {
     let prefix = indent(depth);
 
     // Phase 0: Analyze fields for flattening.
@@ -496,10 +525,12 @@ fn encode_tabular(
     }
 
     let header_fields: Vec<&str> = columns.iter().map(|c| c.header_name.as_str()).collect();
+    let br = if keyed { ":]" } else { "]" };
     out.push_str(&format!(
-        "{}[{}]{{{}}}\n",
+        "{}[{}{}{{{}}}\n",
         header_prefix,
         arr.len(),
+        br,
         header_fields.join(",")
     ));
 
@@ -630,8 +661,18 @@ fn encode_tabular(
             } else {
                 match &att.value {
                     Value::Object(sub) => {
-                        out.push_str(&format!("{}.{} {{}}\n", prefix, fk));
-                        encode_object(sub, out, depth + 2, opts);
+                        if let Some(km) = keyed_map_eligible(sub) {
+                            encode_keyed_map(
+                                &format!("{}.{} ", prefix, fk),
+                                &km,
+                                out,
+                                depth + 2,
+                                opts,
+                            );
+                        } else {
+                            out.push_str(&format!("{}.{} {{}}\n", prefix, fk));
+                            encode_object(sub, out, depth + 2, opts);
+                        }
                     }
                     Value::Array(sub) => {
                         if let Some(sas) = shared_arr_schemas.get(&att.name) {
@@ -759,8 +800,12 @@ fn encode_expanded(
     for (i, item) in arr.iter().enumerate() {
         match item {
             Value::Object(map) => {
-                out.push_str(&format!("{}@{} {{}}\n", prefix, i));
-                encode_object(map, out, depth + 1, opts);
+                if let Some(km) = keyed_map_eligible(map) {
+                    encode_keyed_map(&format!("{}@{} ", prefix, i), &km, out, depth + 1, opts);
+                } else {
+                    out.push_str(&format!("{}@{} {{}}\n", prefix, i));
+                    encode_object(map, out, depth + 1, opts);
+                }
             }
             Value::Array(sub) => encode_expanded_array_item(&prefix, i, sub, out, depth, opts),
             _ => {
@@ -814,6 +859,124 @@ fn all_primitives(arr: &[Value]) -> bool {
 
 fn indent(depth: usize) -> String {
     "  ".repeat(depth)
+}
+
+/// The parts of a keyed-tabular map (SPEC 7.2a): the ordered member keys, the
+/// corresponding value objects, the ordered value-field union, and the
+/// key-column label.
+struct KeyedMap<'a> {
+    keys: Vec<&'a str>,
+    values: Vec<&'a Value>,
+    value_fields: Vec<String>,
+    key_label: String,
+}
+
+/// Report whether an object is a keyed map of objects that should render as a
+/// keyed table `## [N:]{key,...}` (SPEC 7.2a.1). Returns the member keys, value
+/// objects, the ordered value-field union, and the key-column label when
+/// eligible; `None` otherwise (the object then uses Section 7.2 section
+/// encoding). This selection is canonical: it is applied unconditionally, with
+/// no option gate.
+fn keyed_map_eligible(map: &serde_json::Map<String, Value>) -> Option<KeyedMap<'_>> {
+    // A keyed map requires at least two members: the form factors the shared
+    // value fields into one header, which only pays off across multiple members.
+    // A single-member map yields a one-row table the same size as a section, so
+    // keying it would change canonical output for every nested single-member
+    // object (e.g. `{"data":{...}}` wrappers) with no benefit (SPEC 7.2a.1).
+    if map.len() < 2 {
+        return None;
+    }
+
+    let keys: Vec<&str> = map.keys().map(|k| k.as_str()).collect();
+    let values: Vec<&Value> = map.values().collect();
+
+    // Every value must be an object; build the ordered field union over all
+    // members (SPEC 7.4.3 union order).
+    let mut value_fields: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for v in &values {
+        let vo = v.as_object()?; // non-object value: not eligible
+        for f in vo.keys() {
+            if seen.insert(f.clone()) {
+                value_fields.push(f.clone());
+            }
+        }
+    }
+    // All-empty value objects have an empty field union and are not eligible.
+    if value_fields.is_empty() {
+        return None;
+    }
+
+    // A keyed header needs at least one value field that can be a tabular column.
+    // A field name containing ">" cannot be a column (SPEC 7.4.6.1.4); if every
+    // value field contains ">", the keyed form would have only the key column,
+    // which is invalid. Such a map uses Section 7.2 section encoding instead, the
+    // object analogue of an array falling back to expanded form.
+    if !value_fields.iter().any(|f| !f.contains('>')) {
+        return None;
+    }
+
+    // Key-column label: "key", made unique by prepending "_" on collision
+    // (SPEC 7.2a.2). The label is a display name only.
+    let mut key_label = String::from("key");
+    while value_fields.iter().any(|f| f == &key_label) {
+        key_label.insert(0, '_');
+    }
+
+    Some(KeyedMap {
+        keys,
+        values,
+        value_fields,
+        key_label,
+    })
+}
+
+/// Emit a keyed table for a map of objects. It augments each value object with
+/// the key column and routes through `encode_tabular_inner` with the keyed
+/// bracket, so nested-value handling (flatten/inline/attachment/null/absent) is
+/// inherited unchanged from Section 7.4. `header_prefix` is the full prefix up
+/// to the count bracket (e.g. `## `, `## name `, or `@N `).
+fn encode_keyed_map(
+    header_prefix: &str,
+    km: &KeyedMap,
+    out: &mut String,
+    depth: usize,
+    opts: &GenericOptions,
+) {
+    let mut fields: Vec<String> = Vec::with_capacity(km.value_fields.len() + 1);
+    fields.push(km.key_label.clone());
+    fields.extend(km.value_fields.iter().cloned());
+
+    let arr: Vec<Value> = km
+        .keys
+        .iter()
+        .zip(km.values.iter())
+        .map(|(k, v)| {
+            let mut aug = serde_json::Map::new();
+            if let Some(vo) = v.as_object() {
+                for (kk, vv) in vo {
+                    aug.insert(kk.clone(), vv.clone());
+                }
+            }
+            aug.insert(km.key_label.clone(), Value::String((*k).to_string()));
+            Value::Object(aug)
+        })
+        .collect();
+
+    encode_tabular_inner(header_prefix, &arr, &fields, out, depth, opts, true);
+}
+
+/// Build the header prefix for a keyed block. `named` distinguishes an anonymous
+/// root keyed map (`## `) from a named member whose name may itself be the empty
+/// string (`## ""`), which `format_key` quotes so it round-trips as a distinct
+/// level rather than collapsing into the anonymous root form (SPEC 7.2a.1).
+fn keyed_header_prefix(name: &str, named: bool, depth: usize) -> String {
+    let prefix = indent(depth);
+    if !named {
+        format!("{}## ", prefix)
+    } else {
+        format!("{}## {} ", prefix, format_key(name))
+    }
 }
 
 #[cfg(test)]
