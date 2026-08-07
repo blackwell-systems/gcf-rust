@@ -492,18 +492,23 @@ fn reorder_row_by_fields(row: Map<String, Value>, fields: &[String]) -> Map<Stri
 
 /// Unflatten path columns into nested objects.
 fn unflatten_paths(
+    fields: &[String],
     path_columns: &std::collections::HashMap<String, Vec<String>>,
     flat_values: &std::collections::HashMap<String, Value>,
     flat_absent: &std::collections::HashSet<String>,
 ) -> Map<String, Value> {
-    // Group by top-level parent.
+    // Group by top-level parent, iterating the declared header field order so both
+    // the group order and the leaf order within each nested object follow the header,
+    // not HashMap iteration order (SPEC 7.4.6.1 step 7; key ordering is a preserved
+    // round-trip property, SPEC 52 and 931).
     let mut groups: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
     let mut group_order: Vec<String> = Vec::new();
-    for (field_name, paths) in path_columns {
-        if paths.is_empty() {
-            continue;
-        }
+    for field_name in fields {
+        let paths = match path_columns.get(field_name) {
+            Some(p) if !p.is_empty() => p,
+            _ => continue,
+        };
         let top = &paths[0];
         if !groups.contains_key(top) {
             group_order.push(top.clone());
@@ -873,7 +878,7 @@ fn parse_tabular_body_with_shared(
 
         // Unflatten path columns into nested objects.
         if !path_column_map.is_empty() {
-            let nested = unflatten_paths(&path_column_map, &flat_values, &flat_absent);
+            let nested = unflatten_paths(fields, &path_column_map, &flat_values, &flat_absent);
             for (k, v) in nested {
                 row.insert(k, v);
             }
