@@ -1,7 +1,7 @@
 //! Conformance tests for GCF v2.0 (133 fixtures).
 
 use gcf::{
-    decode_delta, decode_generic, decode_generic_delta, encode_delta, encode_generic,
+    decode, decode_delta, decode_generic, decode_generic_delta, encode_delta, encode_generic,
     encode_generic_delta, encode_with_session, generic_pack_root, pack_root,
     pack_root_canonical_bytes, verify_delta, verify_generic_delta, DeltaPayload, Edge,
     GenericDeltaPayload, GenericDeltaSession, GenericSet, Payload, ReanchorPolicy, Session,
@@ -10,6 +10,25 @@ use gcf::{
 use serde_json::{Map, Value};
 use std::fs;
 use std::path::Path;
+
+/// strip_delta_savings removes the derived ` savings=...` header stat so re-encode
+/// idempotence can be checked on the parts of the wire the payload actually carries
+/// (the stat is computed from the original set sizes at encode time and is not on the
+/// wire, so a decode/re-encode legitimately cannot reconstruct it).
+fn strip_delta_savings(s: &str) -> String {
+    if let Some(idx) = s.find(" savings=") {
+        let mut end = idx + " savings=".len();
+        let bytes = s.as_bytes();
+        while end < bytes.len() && bytes[end] != b' ' && bytes[end] != b'\n' {
+            end += 1;
+        }
+        let mut out = String::with_capacity(s.len());
+        out.push_str(&s[..idx]);
+        out.push_str(&s[end..]);
+        return out;
+    }
+    s.to_string()
+}
 
 #[derive(serde::Deserialize)]
 struct Fixture {
@@ -361,9 +380,30 @@ fn test_conformance_v2() {
                             rel_path, got, expected_str
                         );
                         failed += 1;
-                    } else {
-                        passed += 1;
+                        continue;
                     }
+                    // Re-encode idempotence: encode(decode(got)) == got. Confirms the
+                    // graph decoder reconstructs the payload without dropping or reordering
+                    // fields (SPEC 52, 931).
+                    match decode(&got) {
+                        Ok(decoded) => {
+                            let re_encoded = gcf::encode(&decoded);
+                            if re_encoded != got {
+                                eprintln!(
+                                    "FAIL {}: graph re-encode not idempotent\n  got:  {:?}\n  renc: {:?}",
+                                    rel_path, got, re_encoded
+                                );
+                                failed += 1;
+                                continue;
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("FAIL {}: graph round-trip decode error: {}", rel_path, e);
+                            failed += 1;
+                            continue;
+                        }
+                    }
+                    passed += 1;
                     continue;
                 }
                 let input = match fix.input.as_ref() {
@@ -508,9 +548,30 @@ fn test_conformance_v2() {
                         rel_path, got, exp
                     );
                     failed += 1;
-                } else {
-                    passed += 1;
+                    continue;
                 }
+                // Re-encode idempotence: encode(decode(got)) == got, ignoring the derived
+                // savings= header stat (see strip_delta_savings). Confirms the delta decoder
+                // preserves fields and their order (SPEC 52, 931).
+                match decode_generic_delta(&got) {
+                    Ok(decoded) => {
+                        let re_encoded = encode_generic_delta(&decoded);
+                        if strip_delta_savings(&re_encoded) != strip_delta_savings(&got) {
+                            eprintln!(
+                                "FAIL {}: delta re-encode not idempotent\n  got:  {:?}\n  renc: {:?}",
+                                rel_path, got, re_encoded
+                            );
+                            failed += 1;
+                            continue;
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("FAIL {}: delta round-trip decode error: {}", rel_path, e);
+                        failed += 1;
+                        continue;
+                    }
+                }
+                passed += 1;
             }
             "generic-delta-verify" | "generic-delta-decode" => {
                 let inp = fix.input.as_ref().unwrap();
