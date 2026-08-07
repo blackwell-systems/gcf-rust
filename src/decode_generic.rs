@@ -438,9 +438,11 @@ fn keyed_rows_to_map(rows: Vec<Value>, fields: &[String]) -> Result<Map<String, 
         };
         // Cell 0 always populates the key column (a JSON key is a string, and the
         // Section 2.4 quoting obligation forces cell 0 to round-trip as a string),
-        // so a missing key label indicates a malformed row.
+        // so a missing key label indicates a malformed row. shift_remove preserves
+        // the order of the remaining value fields; the default remove is a
+        // swap_remove that would move the last field into the key's slot.
         let key_val = row
-            .remove(key_label)
+            .shift_remove(key_label)
             .ok_or_else(|| format!("keyed_map: row missing key column {}", key_label))?;
         let ks = match key_val {
             Value::String(s) => s,
@@ -452,6 +454,40 @@ fn keyed_rows_to_map(rows: Vec<Value>, fields: &[String]) -> Result<Map<String, 
         out.insert(ks, Value::Object(row));
     }
     Ok(out)
+}
+
+/// Rebuild a decoded row so its keys follow the declared header field order.
+/// Each declared field maps to a top-level output key: a plain field maps to
+/// itself, a path column ("parent>child") maps to its first segment. Duplicate
+/// top-level keys (sibling path columns sharing a parent) are emitted once at
+/// the parent's first occurrence. Any keys present in the row but not implied by
+/// the declared fields are appended in their current order.
+fn reorder_row_by_fields(row: Map<String, Value>, fields: &[String]) -> Map<String, Value> {
+    let mut ordered_keys: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for f in fields {
+        let top = match f.split_once('>') {
+            Some((parent, _)) if !parent.is_empty() => parent.to_string(),
+            _ => f.clone(),
+        };
+        if seen.insert(top.clone()) {
+            ordered_keys.push(top);
+        }
+    }
+
+    let mut out = Map::new();
+    for k in &ordered_keys {
+        if let Some(v) = row.get(k) {
+            out.insert(k.clone(), v.clone());
+        }
+    }
+    // Preserve any keys the declared fields did not account for, in row order.
+    for (k, v) in &row {
+        if !out.contains_key(k) {
+            out.insert(k.clone(), v.clone());
+        }
+    }
+    out
 }
 
 /// Unflatten path columns into nested objects.
@@ -842,6 +878,15 @@ fn parse_tabular_body_with_shared(
                 row.insert(k, v);
             }
         }
+
+        // Reorder the row's keys to match the declared field order. Scalar cells are
+        // inserted in field order during the first pass, but attachment cells and
+        // path (flatten) columns are filled in later passes and would otherwise land
+        // after all scalars, breaking the input key order the encoder preserved. The
+        // declared top-level key for a plain field is the field name; for a path
+        // column ("parent>child") it is the first path segment, deduplicated so
+        // sibling path columns collapse to one parent key at its first occurrence.
+        row = reorder_row_by_fields(row, fields);
 
         rows.push(Value::Object(row));
 
