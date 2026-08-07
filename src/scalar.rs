@@ -124,9 +124,7 @@ pub fn format_number(n: &serde_json::Number) -> String {
     }
     if let Some(f) = n.as_f64() {
         if f == 0.0 {
-            if f.is_sign_negative() {
-                return "-0".to_string();
-            }
+            // Negative zero canonicalizes to 0 (SPEC 2.3.1): -0.0 equals 0.0 by value.
             return "0".to_string();
         }
         let abs = f.abs();
