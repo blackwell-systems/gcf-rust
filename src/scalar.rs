@@ -33,6 +33,14 @@ pub fn needs_quote(s: &str) -> bool {
     if matches!(s, "-" | "~" | "^" | "true" | "false") {
         return true;
     }
+    // A value shaped like an inline-schema attachment marker (^{...}) would decode
+    // as an attachment and lose the string, so it must be quoted (SPEC 2.4).
+    {
+        let b = s.as_bytes();
+        if b.len() >= 3 && b[0] == b'^' && b[1] == b'{' && b[b.len() - 1] == b'}' {
+            return true;
+        }
+    }
     if JSON_NUMBER_RE.is_match(s) {
         return true;
     }
