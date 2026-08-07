@@ -1,4 +1,4 @@
-use crate::scalar::format_key;
+use crate::scalar::{format_key, format_scalar};
 use std::io::Write;
 use std::sync::Mutex;
 
@@ -65,22 +65,27 @@ pub enum GcfValue {
 }
 
 impl GcfValue {
+    /// Format a row value using the canonical scalar formatter (SPEC 2.4), the
+    /// same `format_scalar(v, '|')` the buffered tabular encoder uses. Formatting
+    /// a string bare here (as the previous branch did, quoting only empty / `|` /
+    /// newline strings) would let a string collide with a non-string token: the
+    /// string `"true"` decodes as a Bool, `"123"` as a Number, `"-"`/`"~"`/`"^"`
+    /// as markers, and a leading `@`/`#`/`.` misparses. `format_scalar` applies
+    /// the full cell-quoting rules so a round-trip preserves the value's type.
     fn format(&self) -> String {
-        match self {
-            GcfValue::Null => "-".to_string(),
-            GcfValue::Bool(b) => if *b { "true" } else { "false" }.to_string(),
-            GcfValue::Int(n) => n.to_string(),
-            GcfValue::Float(f) => format!("{}", f),
-            GcfValue::Str(s) => {
-                if s.is_empty() {
-                    return "\"\"".to_string();
-                }
-                if s.contains('|') || s.contains('\n') {
-                    return format!("\"{}\"", s.replace('"', "\\\""));
-                }
-                s.clone()
-            }
-        }
+        let v: serde_json::Value = match self {
+            GcfValue::Null => serde_json::Value::Null,
+            GcfValue::Bool(b) => serde_json::Value::Bool(*b),
+            GcfValue::Int(n) => serde_json::Value::Number((*n).into()),
+            GcfValue::Float(f) => match serde_json::Number::from_f64(*f) {
+                Some(n) => serde_json::Value::Number(n),
+                // NaN / Infinity have no JSON representation; JSON encoders emit
+                // null for them, so match that behavior rather than panic.
+                None => serde_json::Value::Null,
+            },
+            GcfValue::Str(s) => serde_json::Value::String(s.clone()),
+        };
+        format_scalar(&v, '|')
     }
 }
 
