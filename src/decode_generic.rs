@@ -97,7 +97,9 @@ pub fn decode_generic(input: &str) -> Result<Value, String> {
         // case; surplus is caught here (SPEC Section 13: a mismatch, fewer OR more
         // items than declared, is an error).
         if consumed < content_lines.len() {
-            return Err("count_mismatch: declared count is fewer than the rows present".to_string());
+            return Err(
+                "count_mismatch: declared count is fewer than the rows present".to_string(),
+            );
         }
         return Ok(arr);
     }

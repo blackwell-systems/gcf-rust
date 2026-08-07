@@ -527,7 +527,10 @@ pub fn decode_generic_full(text: &str) -> Result<(GenericSet, String), String> {
         i += 1;
         for j in 0..count {
             if i >= lines.len() || lines[i].starts_with("## ") {
-                return Err(format!("count_mismatch: declared {} rows, got {}", count, j));
+                return Err(format!(
+                    "count_mismatch: declared {} rows, got {}",
+                    count, j
+                ));
             }
             set.rows.push(parse_row(lines[i], &fields)?);
             i += 1;
