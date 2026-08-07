@@ -1,3 +1,4 @@
+use crate::scalar::format_key;
 use std::io::Write;
 use std::sync::Mutex;
 
@@ -18,6 +19,11 @@ struct GenericStreamEncoderInner<W: Write> {
     w: W,
     sections: Vec<SectionCount>,
     current: Option<ActiveArray>,
+    // Deferred error, set when begin_array() rejects a field name (e.g. one
+    // containing '>'). begin_array() has no return value, so the error is
+    // recorded here and surfaced at close(), matching the buffered API's
+    // fail-closed behavior.
+    error: Option<String>,
 }
 
 /// GenericStreamEncoder writes GCF tabular output incrementally as rows arrive.
@@ -114,6 +120,18 @@ impl From<String> for GcfValue {
     }
 }
 
+/// Quote each field name per Section 2.4 (via `format_key`), matching the
+/// buffered tabular header. The streaming header previously joined field names
+/// raw, so a name containing a delimiter or quote produced an invalid or
+/// ambiguous field declaration (SPEC 8.3).
+fn format_field_decl(fields: &[&str]) -> String {
+    fields
+        .iter()
+        .map(|f| format_key(f))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 impl<W: Write> GenericStreamEncoder<W> {
     /// Create a new streaming encoder for tabular/generic data.
     pub fn new(w: W) -> Self {
@@ -122,18 +140,38 @@ impl<W: Write> GenericStreamEncoder<W> {
                 w,
                 sections: Vec::new(),
                 current: None,
+                error: None,
             }),
         }
     }
 
     /// Start a tabular array section with deferred count [?].
+    ///
+    /// The section name and each field name are quoted per Section 2.4 (via
+    /// `format_key`), matching the buffered tabular header, so a name containing
+    /// a delimiter or quote does not produce an invalid or ambiguous header.
+    /// A field name containing '>' is a flattened path that a flat streaming row
+    /// cannot represent (SPEC 8.3, 7.4.6); it is rejected and the error is
+    /// surfaced at `close()`.
     pub fn begin_array(&self, name: &str, fields: &[&str]) {
         let mut inner = self.inner.lock().unwrap();
+        if inner.error.is_some() {
+            return;
+        }
         if inner.current.is_some() {
             Self::end_array_locked(&mut inner);
         }
-        let fields_str = fields.join(",");
-        writeln!(inner.w, "## {} [?]{{{}}}", name, fields_str).unwrap();
+        for f in fields {
+            if f.contains('>') {
+                inner.error = Some(format!(
+                    "streaming field name {:?} contains '>' (a flattened path is not representable in a streaming row)",
+                    f
+                ));
+                return;
+            }
+        }
+        let fields_str = format_field_decl(fields);
+        writeln!(inner.w, "## {} [?]{{{}}}", format_key(name), fields_str).unwrap();
         inner.current = Some(ActiveArray {
             name: name.to_string(),
             fields: fields.iter().map(|s| s.to_string()).collect(),
@@ -183,8 +221,13 @@ impl<W: Write> GenericStreamEncoder<W> {
     }
 
     /// Emit the ##! summary trailer with final counts.
+    ///
+    /// Returns an error if a prior `begin_array()` rejected a field name.
     pub fn close(&self) -> std::io::Result<()> {
         let mut inner = self.inner.lock().unwrap();
+        if let Some(msg) = inner.error.take() {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, msg));
+        }
         if inner.current.is_some() {
             Self::end_array_locked(&mut inner);
         }
