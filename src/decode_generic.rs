@@ -165,7 +165,7 @@ fn parse_object_body(
 
         // Array section.
         if let Some(hdr) = content.strip_prefix("## ") {
-            if let Some(bi) = hdr.find(" [") {
+            if let Some(bi) = find_header_bracket_start(hdr) {
                 let name = parse_key_from_header(&hdr[..bi])?;
                 check_dup(out, &name)?;
                 let (arr, consumed) = parse_array_from_header(lines, i, depth, &hdr[bi..])?;
@@ -262,6 +262,35 @@ fn find_kv_split(s: &str) -> Option<usize> {
         }
     }
     Some(eq_idx)
+}
+
+/// Find the byte index of the named-array count bracket (" [") that is OUTSIDE
+/// any quoted name, so a quoted section/key name containing " [" (e.g.
+/// `## "a [1] b"`) is not misread as a named-array header. Mirrors the
+/// quote-aware scan in find_closing_brace; char_indices keeps the returned
+/// index byte-safe for multibyte names.
+fn find_header_bracket_start(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let mut in_quote = false;
+    let mut escaped = false;
+    for (i, c) in s.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if c == '\\' && in_quote {
+            escaped = true;
+            continue;
+        }
+        if c == '"' {
+            in_quote = !in_quote;
+            continue;
+        }
+        if !in_quote && c == ' ' && i + 1 < bytes.len() && bytes[i + 1] == b'[' {
+            return Some(i);
+        }
+    }
+    None
 }
 
 fn parse_key_from_header(s: &str) -> Result<String, String> {
