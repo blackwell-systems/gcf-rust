@@ -83,9 +83,8 @@ fn needs_quoting(f: &str) -> bool {
 }
 
 fn assemble(body: &str) -> String {
-    // The streaming encoder emits the body only; a full payload carries the
-    // GCF preamble.
-    format!("GCF profile=generic\n{}", body)
+    // The streaming encoder emits the GCF profile line itself; use its output as-is.
+    body.to_string()
 }
 
 #[test]

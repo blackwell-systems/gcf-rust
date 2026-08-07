@@ -134,7 +134,8 @@ fn format_field_decl(fields: &[&str]) -> String {
 
 impl<W: Write> GenericStreamEncoder<W> {
     /// Create a new streaming encoder for tabular/generic data.
-    pub fn new(w: W) -> Self {
+    pub fn new(mut w: W) -> Self {
+        let _ = w.write_all(b"GCF profile=generic\n");
         GenericStreamEncoder {
             inner: Mutex::new(GenericStreamEncoderInner {
                 w,
