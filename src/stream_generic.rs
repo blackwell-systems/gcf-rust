@@ -1,3 +1,4 @@
+use crate::scalar::{format_key, format_scalar};
 use std::io::Write;
 use std::sync::Mutex;
 
@@ -18,6 +19,11 @@ struct GenericStreamEncoderInner<W: Write> {
     w: W,
     sections: Vec<SectionCount>,
     current: Option<ActiveArray>,
+    // Deferred error, set when begin_array() rejects a field name (e.g. one
+    // containing '>'). begin_array() has no return value, so the error is
+    // recorded here and surfaced at close(), matching the buffered API's
+    // fail-closed behavior.
+    error: Option<String>,
 }
 
 /// GenericStreamEncoder writes GCF tabular output incrementally as rows arrive.
@@ -59,22 +65,27 @@ pub enum GcfValue {
 }
 
 impl GcfValue {
+    /// Format a row value using the canonical scalar formatter (SPEC 2.4), the
+    /// same `format_scalar(v, '|')` the buffered tabular encoder uses. Formatting
+    /// a string bare here (as the previous branch did, quoting only empty / `|` /
+    /// newline strings) would let a string collide with a non-string token: the
+    /// string `"true"` decodes as a Bool, `"123"` as a Number, `"-"`/`"~"`/`"^"`
+    /// as markers, and a leading `@`/`#`/`.` misparses. `format_scalar` applies
+    /// the full cell-quoting rules so a round-trip preserves the value's type.
     fn format(&self) -> String {
-        match self {
-            GcfValue::Null => "-".to_string(),
-            GcfValue::Bool(b) => if *b { "true" } else { "false" }.to_string(),
-            GcfValue::Int(n) => n.to_string(),
-            GcfValue::Float(f) => format!("{}", f),
-            GcfValue::Str(s) => {
-                if s.is_empty() {
-                    return "\"\"".to_string();
-                }
-                if s.contains('|') || s.contains('\n') {
-                    return format!("\"{}\"", s.replace('"', "\\\""));
-                }
-                s.clone()
-            }
-        }
+        let v: serde_json::Value = match self {
+            GcfValue::Null => serde_json::Value::Null,
+            GcfValue::Bool(b) => serde_json::Value::Bool(*b),
+            GcfValue::Int(n) => serde_json::Value::Number((*n).into()),
+            GcfValue::Float(f) => match serde_json::Number::from_f64(*f) {
+                Some(n) => serde_json::Value::Number(n),
+                // NaN / Infinity have no JSON representation; JSON encoders emit
+                // null for them, so match that behavior rather than panic.
+                None => serde_json::Value::Null,
+            },
+            GcfValue::Str(s) => serde_json::Value::String(s.clone()),
+        };
+        format_scalar(&v, '|')
     }
 }
 
@@ -114,26 +125,59 @@ impl From<String> for GcfValue {
     }
 }
 
+/// Quote each field name per Section 2.4 (via `format_key`), matching the
+/// buffered tabular header. The streaming header previously joined field names
+/// raw, so a name containing a delimiter or quote produced an invalid or
+/// ambiguous field declaration (SPEC 8.3).
+fn format_field_decl(fields: &[&str]) -> String {
+    fields
+        .iter()
+        .map(|f| format_key(f))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 impl<W: Write> GenericStreamEncoder<W> {
     /// Create a new streaming encoder for tabular/generic data.
-    pub fn new(w: W) -> Self {
+    pub fn new(mut w: W) -> Self {
+        let _ = w.write_all(b"GCF profile=generic\n");
         GenericStreamEncoder {
             inner: Mutex::new(GenericStreamEncoderInner {
                 w,
                 sections: Vec::new(),
                 current: None,
+                error: None,
             }),
         }
     }
 
     /// Start a tabular array section with deferred count [?].
+    ///
+    /// The section name and each field name are quoted per Section 2.4 (via
+    /// `format_key`), matching the buffered tabular header, so a name containing
+    /// a delimiter or quote does not produce an invalid or ambiguous header.
+    /// A field name containing '>' is a flattened path that a flat streaming row
+    /// cannot represent (SPEC 8.3, 7.4.6); it is rejected and the error is
+    /// surfaced at `close()`.
     pub fn begin_array(&self, name: &str, fields: &[&str]) {
         let mut inner = self.inner.lock().unwrap();
+        if inner.error.is_some() {
+            return;
+        }
         if inner.current.is_some() {
             Self::end_array_locked(&mut inner);
         }
-        let fields_str = fields.join(",");
-        writeln!(inner.w, "## {} [?]{{{}}}", name, fields_str).unwrap();
+        for f in fields {
+            if f.contains('>') {
+                inner.error = Some(format!(
+                    "streaming field name {:?} contains '>' (a flattened path is not representable in a streaming row)",
+                    f
+                ));
+                return;
+            }
+        }
+        let fields_str = format_field_decl(fields);
+        writeln!(inner.w, "## {} [?]{{{}}}", format_key(name), fields_str).unwrap();
         inner.current = Some(ActiveArray {
             name: name.to_string(),
             fields: fields.iter().map(|s| s.to_string()).collect(),
@@ -183,8 +227,13 @@ impl<W: Write> GenericStreamEncoder<W> {
     }
 
     /// Emit the ##! summary trailer with final counts.
+    ///
+    /// Returns an error if a prior `begin_array()` rejected a field name.
     pub fn close(&self) -> std::io::Result<()> {
         let mut inner = self.inner.lock().unwrap();
+        if let Some(msg) = inner.error.take() {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, msg));
+        }
         if inner.current.is_some() {
             Self::end_array_locked(&mut inner);
         }

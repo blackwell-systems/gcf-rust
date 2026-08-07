@@ -348,10 +348,14 @@ pub fn split_field_decl(s: &str) -> Result<Vec<String>, String> {
     Ok(fields)
 }
 
+/// Returns the BYTE offset of the closing brace that matches the opening one.
+/// Callers slice `s` by byte offset (`&s[..idx + 1]`), so this must return a
+/// byte index: `.chars().enumerate()` yields char positions, which truncate the
+/// slice when the field name contains a multibyte char.
 pub fn find_closing_brace(s: &str) -> Option<usize> {
     let mut in_quote = false;
     let mut escaped = false;
-    for (i, c) in s.chars().enumerate() {
+    for (i, c) in s.char_indices() {
         if escaped {
             escaped = false;
             continue;
