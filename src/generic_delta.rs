@@ -506,8 +506,17 @@ pub fn decode_generic_full(text: &str) -> Result<(GenericSet, String), String> {
     while i < lines.len() {
         let line = lines[i];
         if !line.starts_with("## ") {
-            i += 1;
-            continue;
+            // Only blank lines, comments, and the ##! summary trailer are valid
+            // outside a section; any other line is a surplus row past a declared
+            // section count (Section 13).
+            if line.is_empty() || line.starts_with("# ") || line.starts_with("##! ") {
+                i += 1;
+                continue;
+            }
+            return Err(format!(
+                "count_mismatch: unexpected content after declared section rows: {:?}",
+                line
+            ));
         }
         let (name, count, fields, key_field) = parse_section_header(&line[3..])?;
         set.name = name;
@@ -516,9 +525,9 @@ pub fn decode_generic_full(text: &str) -> Result<(GenericSet, String), String> {
             set.key = key_field;
         }
         i += 1;
-        for _ in 0..count {
-            if i >= lines.len() {
-                return Err("delta_invalid: fewer rows than declared count".to_string());
+        for j in 0..count {
+            if i >= lines.len() || lines[i].starts_with("## ") {
+                return Err(format!("count_mismatch: declared {} rows, got {}", count, j));
             }
             set.rows.push(parse_row(lines[i], &fields)?);
             i += 1;
@@ -551,8 +560,17 @@ pub fn decode_generic_delta(text: &str) -> Result<GenericDeltaPayload, String> {
     while i < lines.len() {
         let line = lines[i];
         if !line.starts_with("## ") {
-            i += 1;
-            continue;
+            // Only blank lines, comments, and the ##! summary trailer are valid
+            // outside a section; any other line is a surplus row past a declared
+            // section count (Section 13).
+            if line.is_empty() || line.starts_with("# ") || line.starts_with("##! ") {
+                i += 1;
+                continue;
+            }
+            return Err(format!(
+                "count_mismatch: unexpected content after declared section rows: {:?}",
+                line
+            ));
         }
         let (name, count, fields, key_field) = parse_section_header(&line[3..])?;
         if d.key.is_empty() && !key_field.is_empty() {
@@ -566,11 +584,11 @@ pub fn decode_generic_delta(text: &str) -> Result<GenericDeltaPayload, String> {
         match name.as_str() {
             "added" | "changed" => {
                 let mut rows = Vec::with_capacity(count);
-                for _ in 0..count {
-                    if i >= lines.len() {
+                for j in 0..count {
+                    if i >= lines.len() || lines[i].starts_with("## ") {
                         return Err(format!(
-                            "delta_invalid: fewer rows than declared count in ## {}",
-                            name
+                            "count_mismatch: declared {} rows in ## {}, got {}",
+                            count, name, j
                         ));
                     }
                     rows.push(parse_row(lines[i], &fields)?);
@@ -583,12 +601,12 @@ pub fn decode_generic_delta(text: &str) -> Result<GenericDeltaPayload, String> {
                 }
             }
             "removed" => {
-                for _ in 0..count {
-                    if i >= lines.len() {
-                        return Err(
-                            "delta_invalid: fewer identities than declared count in ## removed"
-                                .to_string(),
-                        );
+                for j in 0..count {
+                    if i >= lines.len() || lines[i].starts_with("## ") {
+                        return Err(format!(
+                            "count_mismatch: declared {} identities in ## removed, got {}",
+                            count, j
+                        ));
                     }
                     d.removed
                         .push(scalar_to_value(parse_scalar(lines[i], true)?)?);

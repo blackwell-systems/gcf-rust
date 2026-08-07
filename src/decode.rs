@@ -60,6 +60,8 @@ pub fn decode(input: &str) -> Result<Payload, DecodeError> {
     let mut sym_by_id: HashMap<usize, usize> = HashMap::new(); // id -> index in symbols vec
     let mut current_distance: i32 = 0;
     let mut in_edges = false;
+    let mut declared_edges: i64 = -1;
+    let mut edges_declared = false;
     let is_delta = header.contains("delta=true");
     let valid_delta_sections: std::collections::HashSet<&str> =
         ["removed", "added", "edges_removed", "edges_added"]
@@ -80,9 +82,29 @@ pub fn decode(input: &str) -> Result<Payload, DecodeError> {
 
         // Group header.
         if let Some(raw_group) = line.strip_prefix("## ") {
-            // Strip bracket suffix: "edges [200]" -> "edges"
+            // Strip bracket suffix: "edges [200]" -> "edges", capturing the
+            // declared count so it can be enforced per Section 13.
+            let mut declared_count: i64 = -1;
             let group = match raw_group.find(" [") {
-                Some(idx) => &raw_group[..idx],
+                Some(idx) => {
+                    let bracket = &raw_group[idx + 2..];
+                    if let Some(end) = bracket.find(']') {
+                        let cnt_str = &bracket[..end];
+                        if cnt_str != "?" {
+                            // "[?]" is a streaming deferred count (Section 8)
+                            match cnt_str.parse::<i64>() {
+                                Ok(n) => declared_count = n,
+                                Err(_) => {
+                                    return Err(DecodeError::InvalidField(format!(
+                                        "count_mismatch: invalid section count {:?}",
+                                        cnt_str
+                                    )))
+                                }
+                            }
+                        }
+                    }
+                    &raw_group[..idx]
+                }
                 None => raw_group,
             };
             if is_delta && !valid_delta_sections.contains(group) {
@@ -93,6 +115,10 @@ pub fn decode(input: &str) -> Result<Payload, DecodeError> {
             }
             if group == "edges" {
                 in_edges = true;
+                if declared_count >= 0 {
+                    declared_edges = declared_count;
+                    edges_declared = true;
+                }
             } else {
                 in_edges = false;
                 match group {
@@ -124,6 +150,16 @@ pub fn decode(input: &str) -> Result<Payload, DecodeError> {
             symbols.push(sym);
             sym_by_id.insert(id, symbols.len() - 1);
         }
+    }
+
+    // Section 13: a declared [N] section count MUST match the actual item count.
+    // The graph edges section is the graph profile's only [N]-bearing section.
+    if edges_declared && p.edges.len() as i64 != declared_edges {
+        return Err(DecodeError::InvalidField(format!(
+            "count_mismatch: declared {} edges, got {}",
+            declared_edges,
+            p.edges.len()
+        )));
     }
 
     p.symbols = symbols;

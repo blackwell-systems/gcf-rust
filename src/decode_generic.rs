@@ -90,7 +90,15 @@ pub fn decode_generic(input: &str) -> Result<Value, String> {
 
     // Root array.
     if first.starts_with("## [") {
-        let (arr, _) = parse_array_from_header(&content_lines, 0, 0, &first[3..])?;
+        let (arr, consumed) = parse_array_from_header(&content_lines, 0, 0, &first[3..])?;
+        // A root array or keyed map spans the whole document, so any structural line
+        // past the consumed rows is a surplus item, not sibling content. The row loop
+        // stops at the declared count, so the count assert only catches the deficit
+        // case; surplus is caught here (SPEC Section 13: a mismatch, fewer OR more
+        // items than declared, is an error).
+        if consumed < content_lines.len() {
+            return Err("count_mismatch: declared count is fewer than the rows present".to_string());
+        }
         return Ok(arr);
     }
 
