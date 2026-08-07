@@ -393,6 +393,19 @@ fn test_conformance_v2() {
                             failed += 1;
                             continue;
                         }
+                        // Re-encode idempotence: encode(decode(got)) == got. Order-sensitive,
+                        // so it catches a decoder that drops object field order, which
+                        // structural_equal cannot. Object key ordering is a preserved
+                        // round-trip property (SPEC 52, 931).
+                        let re_encoded = encode_generic(&decoded);
+                        if re_encoded != got {
+                            eprintln!(
+                                "FAIL {}: re-encode not idempotent (field order or value loss)\n  got:  {:?}\n  renc: {:?}",
+                                rel_path, got, re_encoded
+                            );
+                            failed += 1;
+                            continue;
+                        }
                     }
                     Err(e) => {
                         eprintln!("FAIL {}: round-trip decode error: {}", rel_path, e);
