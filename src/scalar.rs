@@ -5,8 +5,9 @@ use std::sync::LazyLock;
 
 // Digits are ASCII 0-9 (SPEC 2.3): \d is avoided because the regex crate's \d also
 // matches Unicode decimal digits (\p{Nd}), which would accept e.g. "1.<U+0665>".
-static JSON_NUMBER_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$").unwrap());
+static JSON_NUMBER_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$").unwrap()
+});
 
 static NUMERIC_LIKE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[+-]\.?[0-9]|^\.[0-9]|^0[0-9]").unwrap());
