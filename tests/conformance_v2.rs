@@ -83,6 +83,26 @@ fn walk_dir(base: &Path, dir: &Path, fixtures: &mut Vec<(String, Fixture)>) {
     }
 }
 
+/// Encode-side numeric-domain bridge (mirrors Go's ParseJSONOrdered enforcement):
+/// walks an already-parsed input Value and returns the out-of-range message for the
+/// first number outside the canonical int64 domain, else None. Under the dev-build's
+/// serde_json arbitrary_precision feature a bare-integer literal beyond 2^53 (e.g.
+/// 10^20) is preserved as an exact lexeme rather than pre-floated, so this reproduces
+/// the ingest-site domain check the six 64-bit SDKs perform in their JSON->value
+/// bridge. A u64 above i64::MAX and an over-long integer lexeme are out of range; a
+/// decimal/exponent number is a double and in range (SPEC 2.3.2).
+fn domain_error(v: &Value) -> Option<String> {
+    match v {
+        Value::Number(n) => match gcf::scalar::format_number_checked(n) {
+            Err((_, msg)) => Some(msg),
+            Ok(_) => None,
+        },
+        Value::Array(a) => a.iter().find_map(domain_error),
+        Value::Object(m) => m.values().find_map(domain_error),
+        _ => None,
+    }
+}
+
 fn json_subset(expected: &Value, got: &Value) -> bool {
     match (expected, got) {
         (Value::Object(e), Value::Object(g)) => e
@@ -942,6 +962,91 @@ fn test_conformance_v2() {
                     Ok(()) => passed += 1,
                     Err(msg) => {
                         eprintln!("{}", msg);
+                        failed += 1;
+                    }
+                }
+            }
+            "roundtrip-wire" => {
+                // input and expected are both wire strings. Decode the input wire,
+                // re-encode, and require byte-for-byte equality with expected. This pins
+                // values (int64 max/min, 2^53+1) that cannot survive as a host JSON
+                // number: a decoder that routes integer parsing through f64 re-encodes to
+                // different digits and fails here (SPEC 2.3.2).
+                let input_wire = match &fix.input {
+                    Some(Value::String(s)) => s.clone(),
+                    _ => {
+                        eprintln!(
+                            "FAIL {}: roundtrip-wire missing input wire string",
+                            rel_path
+                        );
+                        failed += 1;
+                        continue;
+                    }
+                };
+                let expected_wire = match &fix.expected {
+                    Some(Value::String(s)) => s.clone(),
+                    _ => {
+                        eprintln!(
+                            "FAIL {}: roundtrip-wire missing expected wire string",
+                            rel_path
+                        );
+                        failed += 1;
+                        continue;
+                    }
+                };
+                match decode_generic(&input_wire) {
+                    Ok(decoded) => {
+                        let re_encoded = encode_generic(&decoded);
+                        if re_encoded != expected_wire {
+                            eprintln!(
+                                "FAIL {}: wire idempotence mismatch\n  got: {:?}\n  exp: {:?}",
+                                rel_path, re_encoded, expected_wire
+                            );
+                            failed += 1;
+                        } else {
+                            passed += 1;
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("FAIL {}: roundtrip-wire decode error: {}", rel_path, e);
+                        failed += 1;
+                    }
+                }
+            }
+            "encode-error" => {
+                // input is a JSON value (encode-side, not a wire string) out of the
+                // numeric domain. Ingesting/encoding it MUST error. The library's
+                // encode_generic is infallible, so the domain is enforced at the ingest
+                // bridge (domain_error), matching Go's runEncodeErrorTest which enforces
+                // it in ParseJSONOrdered.
+                let input = match fix.input.as_ref() {
+                    Some(v) => v,
+                    None => {
+                        eprintln!("FAIL {}: encode-error missing input", rel_path);
+                        failed += 1;
+                        continue;
+                    }
+                };
+                match domain_error(input) {
+                    Some(msg) => {
+                        // If the fixture pins an expectedError substring, require it.
+                        if let Some(exp) = fix.expected_error.as_ref() {
+                            if !msg.contains(exp) {
+                                eprintln!(
+                                    "FAIL {}: wrong error\n  got: {}\n  expected: {}",
+                                    rel_path, msg, exp
+                                );
+                                failed += 1;
+                                continue;
+                            }
+                        }
+                        passed += 1;
+                    }
+                    None => {
+                        eprintln!(
+                            "FAIL {}: expected error {:?}, got successful ingest of {}",
+                            rel_path, fix.expected_error, input
+                        );
                         failed += 1;
                     }
                 }

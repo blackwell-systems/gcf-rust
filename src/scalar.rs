@@ -119,25 +119,57 @@ pub fn format_scalar(v: &serde_json::Value, delimiter: char) -> String {
 }
 
 pub fn format_number(n: &serde_json::Number) -> String {
-    if let Some(i) = n.as_i64() {
-        return i.to_string();
+    match format_number_checked(n) {
+        Ok(s) => s,
+        // The generic encoder path is infallible (returns String), so an out-of-domain
+        // host integer that reaches this formatter is emitted as its lossless decimal
+        // digits rather than approximated through f64. A strict, fail-loud encode path
+        // is enforced at the JSON->value bridge (SPEC 2.3.2); mirrors the Go stopgap in
+        // encode_helpers.go (uint64 > int64 max -> string).
+        Err((s, _)) => s,
     }
-    if let Some(u) = n.as_u64() {
-        return u.to_string();
+}
+
+/// Format a number for the wire, returning an out-of-range error (as the offending
+/// decimal string plus a message) when a host integer is outside the int64 domain.
+/// The token shape follows the numeric domain (SPEC 2.3.1, 2.3.2): an integer value is
+/// emitted as plain decimal digits across the whole closed interval [-2^63, 2^63-1]
+/// (including the minimum -2^63, whose magnitude is exactly 2^63) and is never rendered
+/// in exponent form; a double uses plain decimal iff 1e-6 <= abs < 2^63.
+pub fn format_number_checked(n: &serde_json::Number) -> Result<String, (String, String)> {
+    // Token shape follows the numeric domain (SPEC 2.3.2): inspect the lexeme FIRST. A
+    // bare-integer lexeme (no '.'/'e'/'E') is an int64-domain integer; if it does not
+    // parse to i64 it is outside [-2^63, 2^63-1] and is out of range. This precedes the
+    // as_f64 branch because a Number backed by serde_json's arbitrary_precision returns
+    // Some from as_f64 even for an over-long integer lexeme (e.g. 10^20 -> 1e20), which
+    // would otherwise be misclassified as an in-range double. A u64 in [2^63, 2^64-1] is
+    // likewise a bare integer over the edge and is caught here.
+    let lexeme = n.to_string();
+    if !lexeme.contains(['.', 'e', 'E']) {
+        return match lexeme.parse::<i64>() {
+            Ok(i) => Ok(i.to_string()),
+            Err(_) => Err((lexeme.clone(), out_of_range_message(&lexeme))),
+        };
     }
     if let Some(f) = n.as_f64() {
         if f == 0.0 {
             // Negative zero canonicalizes to 0 (SPEC 2.3.1): -0.0 equals 0.0 by value.
-            return "0".to_string();
+            return Ok("0".to_string());
         }
         let abs = f.abs();
-        if (1e-6..1e21).contains(&abs) {
+        // Plain decimal iff 1e-6 <= abs < 2^53 (9007199254740992.0). Every double at or
+        // above 2^53 is integer-valued, so a plain rendering would emit a bare-integer
+        // token: indistinguishable from an int64 on the wire and beyond the binary64
+        // safe-integer range (2^53-1), so a JavaScript decoder rejects it under its
+        // default policy. Exponent shape keeps bare tokens int64 and decimal/exponent
+        // tokens doubles (SPEC 2.3.1).
+        if (1e-6..9007199254740992.0).contains(&abs) {
             let s = format!("{}", f);
             // Strip trailing .0 for integer-valued floats.
             if s.ends_with(".0") && f == f.trunc() {
-                return s[..s.len() - 2].to_string();
+                return Ok(s[..s.len() - 2].to_string());
             }
-            return s;
+            return Ok(s);
         }
         // Exponent notation.
         let s = format!("{:e}", f);
@@ -153,11 +185,24 @@ pub fn format_number(n: &serde_json::Number) -> String {
                 ("+", exp_part.trim_start_matches('0'))
             };
             let digits = if digits.is_empty() { "0" } else { digits };
-            return format!("{}e{}{}", mantissa, sign, digits);
+            return Ok(format!("{}e{}{}", mantissa, sign, digits));
         }
-        return s;
+        return Ok(s);
     }
-    n.to_string()
+    // Reached only for a decimal/exponent lexeme that as_f64 cannot represent (bare
+    // integers are handled by the lexeme guard above). It is in the double domain, so
+    // emit its lexeme rather than erroring.
+    Ok(n.to_string())
+}
+
+/// Build the actionable out-of-range message for a value outside the int64 domain.
+/// Contains the substring `out_of_range`, names the offending value, states the range,
+/// and gives the remediation (SPEC 2.3.2).
+pub fn out_of_range_message(value: &str) -> String {
+    format!(
+        "out_of_range: integer {} is outside the canonical int64 domain [-9223372036854775808, 9223372036854775807]; model larger values as strings (SPEC 2.3.2)",
+        value
+    )
 }
 
 pub fn is_bare_key(s: &str) -> bool {
@@ -201,14 +246,21 @@ pub fn parse_scalar(s: &str, tabular_context: bool) -> Result<ScalarValue, Strin
         return Ok(ScalarValue::Bool(false));
     }
     if JSON_NUMBER_RE.is_match(s) {
-        if let Ok(f) = s.parse::<f64>() {
-            if !s.contains('.')
-                && !s.contains('e')
-                && !s.contains('E')
-                && f.abs() <= (1i64 << 53) as f64
-            {
-                return Ok(ScalarValue::Int(f as i64));
+        // Token shape follows the numeric domain (SPEC 2.3.2): a bare-integer literal
+        // (no '.', no 'e'/'E') is an int64-domain integer and MUST parse to an exact
+        // i64, not through f64 (which silently approximates magnitudes beyond 2^53).
+        // `-0` is a bare token and parses to i64 0 (canonical zero, SPEC 2.3.1). A
+        // decimal or exponent literal is a double.
+        if !s.contains('.') && !s.contains('e') && !s.contains('E') {
+            match s.parse::<i64>() {
+                Ok(n) => return Ok(ScalarValue::Int(n)),
+                // parse::<i64> returns Err only on overflow here (the JSON number regex
+                // already guaranteed a valid integer lexeme), i.e. the literal is outside
+                // the int64 domain: raise an out-of-range error rather than approximating.
+                Err(_) => return Err(out_of_range_message(s)),
             }
+        }
+        if let Ok(f) = s.parse::<f64>() {
             return Ok(ScalarValue::Float(f));
         }
     }

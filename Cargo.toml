@@ -24,7 +24,13 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 
 [dev-dependencies]
-serde_json = { version = "1", features = ["preserve_order"] }
+# arbitrary_precision lets the conformance runner ingest bare-integer JSON literals
+# beyond 2^53 (e.g. 10^20) as exact lexemes rather than pre-floating them, so the
+# numeric-domain encode / encode-error fixtures (numbers/012, 020-023) can distinguish
+# an out-of-domain integer literal from a genuine double of the same magnitude (SPEC
+# 2.3.2). Feature-unified into the codec under test, where format_number_checked
+# handles the preserved-lexeme path.
+serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision"] }
 serde_yaml = "0.9"
 csv = "1"
 rmp-serde = "1"
