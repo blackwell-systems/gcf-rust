@@ -262,7 +262,7 @@ for snapshot in stream {                      // each turn's current GenericSet
 | Function | Description |
 |----------|-------------|
 | `encode(p: &Payload) -> String` | Encode a graph payload to GCF text |
-| `encode_generic(data: &Value) -> String` | Encode any JSON value to GCF tabular format |
+| `encode_generic(data: &Value) -> Result<String, String>` | Encode any JSON value to GCF tabular format; `Err` if a number is outside the int64 domain (see Numeric domain) |
 | `decode(input: &str) -> Result<Payload, DecodeError>` | Parse GCF text back to a Payload |
 | `encode_with_session(p: &Payload, s: &Session) -> String` | Encode with session deduplication |
 | `encode_delta(d: &DeltaPayload) -> String` | Encode a delta (added/removed only) |
@@ -285,6 +285,30 @@ for snapshot in stream {                      // each turn's current GenericSet
 | `Components` | Score breakdown: blast_radius, confidence, recency, distance |
 | `Session` | Thread-safe tracker for multi-call deduplication |
 | `DecodeError` | Enum of decode failure modes |
+
+## Numeric domain
+
+GCF's canonical numeric domain is a signed 64-bit integer (`int64`, the closed interval
+`[-2^63, 2^63-1]`) for integers and an IEEE-754 double for non-integers (SPEC 2.3.2). The
+codec enforces this on both sides: `decode_generic` returns an error for a bare-integer
+literal outside `int64`, and `encode_generic` returns an error for a `serde_json` number
+outside `int64` (including an unsigned 64-bit value above `i64::MAX`) rather than
+approximating it or silently substituting a string. Model larger values as strings at the
+producer.
+
+**CLI / `serde_json` ingest caveat.** The `gcf encode-generic` CLI and any code that builds
+its `serde_json::Value` from JSON text with the default `serde_json` features parse a JSON
+number into `i64`, `u64`, or `f64`. An integer literal that fits neither `i64` nor `u64`,
+that is, one **below `-2^63` or above `2^64-1`** (for example `100000000000000000000`), has
+no exact host integer type, so `serde_json` parses it into an `f64` **before GCF sees it**.
+GCF then treats it as the double it now is and emits it in exponent form rather than
+rejecting it. This is a property of the JSON-to-value step, not of the GCF codec (which is
+exact within `int64`): a value in `(i64::MAX, u64::MAX]` is held exactly as a `u64` and is
+correctly rejected, but a magnitude beyond the 64-bit host integer types cannot be
+distinguished from a double at ingest. To enforce the `int64` domain strictly on such input,
+model the value as a string at the producer (recommended for identifiers and other exact
+large integers), or enable `serde_json`'s `arbitrary_precision` feature so the literal is
+preserved for the codec's own domain check.
 
 ## Benchmarks
 

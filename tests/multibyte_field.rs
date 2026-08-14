@@ -23,7 +23,7 @@ fn buffered_roundtrip(field: &str) {
     top.insert("rows".to_string(), arr);
     let input = Value::Object(top);
 
-    let wire = encode_generic(&input);
+    let wire = encode_generic(&input).unwrap();
     let decoded = decode_generic(&wire)
         .unwrap_or_else(|e| panic!("decode failed for field {field:?}: {e}\nwire:\n{wire}"));
     assert_eq!(

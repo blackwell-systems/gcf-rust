@@ -1,4 +1,4 @@
-use gcf::{decode_generic, encode_generic, encode_generic_with_options, GenericOptions};
+use gcf::{decode_generic, encode_generic_with_options, GenericOptions};
 use rayon::prelude::*;
 use serde_json::Value;
 use std::io::Write;
@@ -123,7 +123,12 @@ fn run_parallel(
 
         // Test both flatten-on and flatten-off.
         for no_flatten in [false, true] {
-            let encoded = encode_generic_with_options(&data, &GenericOptions { no_flatten });
+            // An out-of-domain integer (SPEC 2.3.2) is legitimately un-encodable, not a
+            // round-trip failure; skip such an input.
+            let encoded = match encode_generic_with_options(&data, &GenericOptions { no_flatten }) {
+                Ok(w) => w,
+                Err(_) => continue,
+            };
             let decoded = match decode_generic(&encoded) {
                 Ok(d) => d,
                 Err(e) => {

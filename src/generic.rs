@@ -1,6 +1,6 @@
 //! GCF generic encoder: serializes serde_json::Value into GCF generic profile.
 
-use crate::scalar::{format_key, format_number, format_scalar};
+use crate::scalar::{format_key, format_number, format_number_checked, format_scalar};
 use serde_json::Value;
 
 /// Options for controlling generic encoding behavior.
@@ -14,15 +14,44 @@ pub struct GenericOptions {
 }
 
 /// Encode any JSON value into GCF generic profile.
-pub fn encode_generic(data: &Value) -> String {
+///
+/// Returns an error if the value contains an integer outside the canonical `int64`
+/// numeric domain (SPEC 2.3.2): the encoder MUST reject such a value rather than
+/// approximate it or substitute a string. Model larger values as strings at the
+/// producer. The check is on the value, so it also rejects an unsigned-64 integer
+/// above `i64::MAX` reachable via `serde_json`.
+pub fn encode_generic(data: &Value) -> Result<String, String> {
     encode_generic_with_options(data, &GenericOptions::default())
 }
 
 /// Encode any JSON value into GCF generic profile with the given options.
-pub fn encode_generic_with_options(data: &Value, opts: &GenericOptions) -> String {
+/// See [`encode_generic`] for the numeric-domain error condition (SPEC 2.3.2).
+pub fn encode_generic_with_options(data: &Value, opts: &GenericOptions) -> Result<String, String> {
+    // Enforce the numeric domain up front (SPEC 2.3.2). Doing it here keeps the
+    // encode tree below infallible: once validated, no out-of-domain integer reaches
+    // the formatters. This is the shipped enforcement point, exercised directly by
+    // the encode-error conformance fixtures.
+    if let Some(err) = domain_error(data) {
+        return Err(err);
+    }
     let mut out = String::from("GCF profile=generic\n");
     encode_root_value(data, &mut out, opts);
-    out
+    Ok(out)
+}
+
+/// Walk a value and return the first out-of-`int64`-domain error message, if any.
+/// A bare-integer number outside `int64` (including a `u64` above `i64::MAX`) is out
+/// of domain (SPEC 2.3.2); a fraction/exponent number is a double and is in range.
+fn domain_error(v: &Value) -> Option<String> {
+    match v {
+        Value::Number(n) => match format_number_checked(n) {
+            Err((_, msg)) => Some(msg),
+            Ok(_) => None,
+        },
+        Value::Array(a) => a.iter().find_map(domain_error),
+        Value::Object(m) => m.values().find_map(domain_error),
+        _ => None,
+    }
 }
 
 fn encode_root_value(v: &Value, out: &mut String, opts: &GenericOptions) {
@@ -987,21 +1016,30 @@ mod tests {
     #[test]
     fn test_generic_header() {
         let data = json!({"name": "Alice"});
-        let output = encode_generic(&data);
+        let output = encode_generic(&data).unwrap();
         assert!(output.starts_with("GCF profile=generic\n"));
     }
 
     #[test]
     fn test_generic_root_scalar() {
-        assert_eq!(encode_generic(&json!(42)), "GCF profile=generic\n=42\n");
-        assert_eq!(encode_generic(&json!(true)), "GCF profile=generic\n=true\n");
-        assert_eq!(encode_generic(&json!(null)), "GCF profile=generic\n=-\n");
+        assert_eq!(
+            encode_generic(&json!(42)).unwrap(),
+            "GCF profile=generic\n=42\n"
+        );
+        assert_eq!(
+            encode_generic(&json!(true)).unwrap(),
+            "GCF profile=generic\n=true\n"
+        );
+        assert_eq!(
+            encode_generic(&json!(null)).unwrap(),
+            "GCF profile=generic\n=-\n"
+        );
     }
 
     #[test]
     fn test_generic_quoting() {
         let data = json!({"val": "true"});
-        let output = encode_generic(&data);
+        let output = encode_generic(&data).unwrap();
         assert!(output.contains("val=\"true\""));
     }
 
@@ -1015,7 +1053,7 @@ mod tests {
         });
 
         // Default (flatten on): should have path columns.
-        let with_flatten = encode_generic(&data);
+        let with_flatten = encode_generic(&data).unwrap();
         assert!(
             with_flatten.contains("customer>"),
             "expected path columns with default, got:\n{}",
@@ -1023,7 +1061,8 @@ mod tests {
         );
 
         // Flatten off: should have attachment syntax, no path columns.
-        let no_flatten = encode_generic_with_options(&data, &GenericOptions { no_flatten: true });
+        let no_flatten =
+            encode_generic_with_options(&data, &GenericOptions { no_flatten: true }).unwrap();
         assert!(
             !no_flatten.contains("customer>"),
             "expected no path columns with no_flatten, got:\n{}",
@@ -1104,7 +1143,7 @@ mod tests {
         for (name, data) in &cases {
             for no_flatten in [false, true] {
                 let opts = GenericOptions { no_flatten };
-                let encoded = encode_generic_with_options(data, &opts);
+                let encoded = encode_generic_with_options(data, &opts).unwrap();
                 let decoded = crate::decode_generic(&encoded).unwrap_or_else(|e| {
                     panic!(
                         "{} (no_flatten={}): decode failed: {}\n  gcf: {:?}",

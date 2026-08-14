@@ -21,7 +21,13 @@ fn main() {
                 eprintln!("error: invalid JSON: {}", e);
                 process::exit(1);
             });
-            print!("{}", gcf::encode_generic(&value));
+            match gcf::encode_generic(&value) {
+                Ok(out) => print!("{}", out),
+                Err(e) => {
+                    eprintln!("error: {}", e);
+                    process::exit(1);
+                }
+            }
         }
         "decode-generic" => {
             let input = read_stdin();

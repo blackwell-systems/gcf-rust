@@ -152,7 +152,7 @@ fn toml_100m() {
         };
 
         // GCF round-trip
-        let encoded = encode_generic(&parsed);
+        let encoded = encode_generic(&parsed).unwrap();
         let decoded = match decode_generic(&encoded) {
             Ok(d) => d,
             Err(e) => {

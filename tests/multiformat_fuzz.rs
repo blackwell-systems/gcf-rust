@@ -1,4 +1,4 @@
-use gcf::{decode_generic, encode_generic, encode_generic_with_options, GenericOptions};
+use gcf::{decode_generic, encode_generic_with_options, GenericOptions};
 use serde_json::Value;
 use std::io::Write;
 use std::time::Instant;
@@ -146,7 +146,12 @@ fn values_equal(a: &Value, b: &Value) -> bool {
 fn gcf_roundtrip(data: &Value) -> Result<(), String> {
     // Test both flatten-on and flatten-off.
     for no_flatten in [false, true] {
-        let encoded = encode_generic_with_options(data, &GenericOptions { no_flatten });
+        // An out-of-domain integer (SPEC 2.3.2) is legitimately un-encodable, not a
+        // round-trip failure; skip such an input.
+        let encoded = match encode_generic_with_options(data, &GenericOptions { no_flatten }) {
+            Ok(w) => w,
+            Err(_) => return Ok(()),
+        };
         let decoded = decode_generic(&encoded)
             .map_err(|e| format!("decode failed (no_flatten={no_flatten}): {e}"))?;
         if !values_equal(data, &decoded) {

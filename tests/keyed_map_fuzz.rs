@@ -208,7 +208,7 @@ fn fuzz_keyed_map_roundtrip() {
         let data = build_map(&mut rng);
         let map = data.as_object().unwrap();
 
-        let encoded = encode_generic(&data);
+        let encoded = encode_generic(&data).unwrap();
 
         // Round-trip: decode the RAW encoder output, compare structurally.
         let decoded = decode_generic(&encoded).unwrap_or_else(|e| {

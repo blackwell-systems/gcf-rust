@@ -120,7 +120,7 @@ fn rerun_json_1b_extra() {
         let s = serde_json::to_string(&v).unwrap();
         let data: Value = serde_json::from_str(&s).unwrap();
 
-        let encoded = encode_generic(&data);
+        let encoded = encode_generic(&data).unwrap();
         let decoded = match decode_generic(&encoded) {
             Ok(d) => d,
             Err(e) => {

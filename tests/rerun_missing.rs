@@ -119,7 +119,7 @@ fn run_parallel(
         let mut rng = seed;
         let data = gen(&mut rng);
 
-        let encoded = encode_generic(&data);
+        let encoded = encode_generic(&data).unwrap();
         let decoded = match decode_generic(&encoded) {
             Ok(d) => d,
             Err(e) => {

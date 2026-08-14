@@ -83,26 +83,6 @@ fn walk_dir(base: &Path, dir: &Path, fixtures: &mut Vec<(String, Fixture)>) {
     }
 }
 
-/// Encode-side numeric-domain bridge (mirrors Go's ParseJSONOrdered enforcement):
-/// walks an already-parsed input Value and returns the out-of-range message for the
-/// first number outside the canonical int64 domain, else None. Under the dev-build's
-/// serde_json arbitrary_precision feature a bare-integer literal beyond 2^53 (e.g.
-/// 10^20) is preserved as an exact lexeme rather than pre-floated, so this reproduces
-/// the ingest-site domain check the six 64-bit SDKs perform in their JSON->value
-/// bridge. A u64 above i64::MAX and an over-long integer lexeme are out of range; a
-/// decimal/exponent number is a double and in range (SPEC 2.3.2).
-fn domain_error(v: &Value) -> Option<String> {
-    match v {
-        Value::Number(n) => match gcf::scalar::format_number_checked(n) {
-            Err((_, msg)) => Some(msg),
-            Ok(_) => None,
-        },
-        Value::Array(a) => a.iter().find_map(domain_error),
-        Value::Object(m) => m.values().find_map(domain_error),
-        _ => None,
-    }
-}
-
 fn json_subset(expected: &Value, got: &Value) -> bool {
     match (expected, got) {
         (Value::Object(e), Value::Object(g)) => e
@@ -433,7 +413,7 @@ fn test_conformance_v2() {
                         continue;
                     }
                 };
-                let got = encode_generic(input);
+                let got = encode_generic(input).unwrap();
                 if got != expected_str {
                     eprintln!(
                         "FAIL {}: encode mismatch\n  got: {:?}\n  exp: {:?}",
@@ -457,7 +437,7 @@ fn test_conformance_v2() {
                         // so it catches a decoder that drops object field order, which
                         // structural_equal cannot. Object key ordering is a preserved
                         // round-trip property (SPEC 52, 931).
-                        let re_encoded = encode_generic(&decoded);
+                        let re_encoded = encode_generic(&decoded).unwrap();
                         if re_encoded != got {
                             eprintln!(
                                 "FAIL {}: re-encode not idempotent (field order or value loss)\n  got:  {:?}\n  renc: {:?}",
@@ -811,7 +791,7 @@ fn test_conformance_v2() {
                         continue;
                     }
                 };
-                let encoded = encode_generic(input);
+                let encoded = encode_generic(input).unwrap();
                 // If expected is a string, verify the encoded output matches it.
                 if let Some(Value::String(exp)) = fix.expected.as_ref() {
                     if &encoded != exp {
@@ -996,7 +976,7 @@ fn test_conformance_v2() {
                 };
                 match decode_generic(&input_wire) {
                     Ok(decoded) => {
-                        let re_encoded = encode_generic(&decoded);
+                        let re_encoded = encode_generic(&decoded).unwrap();
                         if re_encoded != expected_wire {
                             eprintln!(
                                 "FAIL {}: wire idempotence mismatch\n  got: {:?}\n  exp: {:?}",
@@ -1015,10 +995,9 @@ fn test_conformance_v2() {
             }
             "encode-error" => {
                 // input is a JSON value (encode-side, not a wire string) out of the
-                // numeric domain. Ingesting/encoding it MUST error. The library's
-                // encode_generic is infallible, so the domain is enforced at the ingest
-                // bridge (domain_error), matching Go's runEncodeErrorTest which enforces
-                // it in ParseJSONOrdered.
+                // numeric domain. Encoding it MUST error. This exercises the SHIPPED
+                // encode path (encode_generic, now fallible) directly, so the fixture
+                // guards what actually ships, not a test-only domain helper (SPEC 2.3.2).
                 let input = match fix.input.as_ref() {
                     Some(v) => v,
                     None => {
@@ -1027,8 +1006,8 @@ fn test_conformance_v2() {
                         continue;
                     }
                 };
-                match domain_error(input) {
-                    Some(msg) => {
+                match encode_generic(input) {
+                    Err(msg) => {
                         // If the fixture pins an expectedError substring, require it.
                         if let Some(exp) = fix.expected_error.as_ref() {
                             if !msg.contains(exp) {
@@ -1042,10 +1021,10 @@ fn test_conformance_v2() {
                         }
                         passed += 1;
                     }
-                    None => {
+                    Ok(wire) => {
                         eprintln!(
-                            "FAIL {}: expected error {:?}, got successful ingest of {}",
-                            rel_path, fix.expected_error, input
+                            "FAIL {}: expected error {:?}, got successful encode of {}:\n  {}",
+                            rel_path, fix.expected_error, input, wire
                         );
                         failed += 1;
                     }

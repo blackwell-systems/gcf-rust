@@ -117,7 +117,7 @@ fn rerun_csv_1m() {
         }
         let data = Value::Array(rows);
 
-        let encoded = encode_generic(&data);
+        let encoded = encode_generic(&data).unwrap();
         let decoded = match decode_generic(&encoded) {
             Ok(d) => d,
             Err(e) => {

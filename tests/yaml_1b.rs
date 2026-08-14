@@ -127,7 +127,7 @@ fn yaml_to_1b() {
             Err(_) => continue,
         };
 
-        let encoded = encode_generic(&parsed);
+        let encoded = encode_generic(&parsed).unwrap();
         let decoded = match decode_generic(&encoded) {
             Ok(d) => d,
             Err(e) => {

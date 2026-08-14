@@ -2,7 +2,6 @@
 
 use gcf::{decode_generic, encode_generic};
 use serde_json::{json, Value};
-use std::collections::HashMap;
 
 const DEFAULT_ITERATIONS: usize = 100_000;
 
@@ -279,7 +278,7 @@ fn test_flatten_roundtrip() {
     let mut rng = Rng::new(7);
     for i in 0..iterations {
         let val = gen_flattenable_array(&mut rng, gen_bare_key);
-        let gcf = encode_generic(&val);
+        let gcf = encode_generic(&val).unwrap();
         let decoded = decode_generic(&gcf).unwrap_or_else(|e| {
             panic!(
                 "iteration {}: decode failed: {}\n  input: {}\n  gcf: {:?}",
@@ -339,7 +338,7 @@ fn test_flatten_roundtrip_adversarial_keys() {
                 }
             }
         }
-        let gcf = encode_generic(&val);
+        let gcf = encode_generic(&val).unwrap();
         let decoded = decode_generic(&gcf).unwrap_or_else(|e| {
             panic!(
                 "iteration {}: decode failed: {}\n  input: {}\n  gcf: {:?}",
@@ -369,7 +368,7 @@ fn test_random_roundtrip() {
     let mut rng = Rng::new(42);
     for i in 0..iterations {
         let val = gen_value(&mut rng, 0, 4);
-        let gcf = encode_generic(&val);
+        let gcf = encode_generic(&val).unwrap();
         let decoded = decode_generic(&gcf).unwrap_or_else(|e| {
             panic!(
                 "iteration {}: decode failed: {}\n  input: {}\n  gcf: {:?}",
@@ -442,7 +441,7 @@ fn test_adversarial_roundtrip() {
         } else {
             gen_value(&mut rng, 0, 3)
         };
-        let gcf = encode_generic(&val);
+        let gcf = encode_generic(&val).unwrap();
         let decoded = decode_generic(&gcf).unwrap_or_else(|e| {
             panic!(
                 "iteration {}: decode failed: {}\n  input: {}\n  gcf: {:?}",
