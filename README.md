@@ -288,27 +288,23 @@ for snapshot in stream {                      // each turn's current GenericSet
 
 ## Numeric domain
 
-GCF's canonical numeric domain is a signed 64-bit integer (`int64`, the closed interval
-`[-2^63, 2^63-1]`) for integers and an IEEE-754 double for non-integers (SPEC 2.3.2). The
-codec enforces this on both sides: `decode_generic` returns an error for a bare-integer
-literal outside `int64`, and `encode_generic` returns an error for a `serde_json` number
-outside `int64` (including an unsigned 64-bit value above `i64::MAX`) rather than
-approximating it or silently substituting a string. Model larger values as strings at the
-producer.
+The canonical domain is `int64` for integers and IEEE-754 double for non-integers.
+`encode_generic` returns an error for a `serde_json` number outside `int64` (including a
+`u64` above `i64::MAX`), and `decode_generic` rejects an out-of-range literal, rather than
+approximating. See [`SPEC.md` Section 2.3.2](https://github.com/blackwell-systems/gcf/blob/main/SPEC.md)
+and the [FAQ](https://gcformat.com/guide/faq) for the general rule (model larger values as
+strings at the producer).
 
-**CLI / `serde_json` ingest caveat.** The `gcf encode-generic` CLI and any code that builds
-its `serde_json::Value` from JSON text with the default `serde_json` features parse a JSON
-number into `i64`, `u64`, or `f64`. An integer literal that fits neither `i64` nor `u64`,
-that is, one **below `-2^63` or above `2^64-1`** (for example `100000000000000000000`), has
-no exact host integer type, so `serde_json` parses it into an `f64` **before GCF sees it**.
-GCF then treats it as the double it now is and emits it in exponent form rather than
-rejecting it. This is a property of the JSON-to-value step, not of the GCF codec (which is
-exact within `int64`): a value in `(i64::MAX, u64::MAX]` is held exactly as a `u64` and is
-correctly rejected, but a magnitude beyond the 64-bit host integer types cannot be
-distinguished from a double at ingest. To enforce the `int64` domain strictly on such input,
-model the value as a string at the producer (recommended for identifiers and other exact
-large integers), or enable `serde_json`'s `arbitrary_precision` feature so the literal is
-preserved for the codec's own domain check.
+**serde_json ingest caveat (Rust-specific).** The `gcf encode-generic` CLI, and any code
+that builds a `serde_json::Value` from JSON text with the default `serde_json` features,
+parses a JSON number into `i64`, `u64`, or `f64`. An integer literal outside
+**`[-2^63, 2^64-1]`** (for example `100000000000000000000`) fits neither `i64` nor `u64`, so
+`serde_json` parses it into an `f64` **before GCF sees it**, and GCF then emits it as the
+double it now is rather than rejecting it. A value in `(i64::MAX, u64::MAX]` is held exactly
+as a `u64` and is correctly rejected; only a magnitude beyond both 64-bit host integer types
+is indistinguishable from a double at ingest. To enforce the domain strictly on such input,
+model the value as a string at the producer, or enable `serde_json`'s `arbitrary_precision`
+feature so the literal reaches the codec's own check.
 
 ## Benchmarks
 
