@@ -208,7 +208,7 @@ fn parse_object_body(
 
         // Inline array (e.g. items[3]: a,b,c). Only reached if no = found.
         if !content.starts_with('@') && !content.starts_with("##") {
-            if let Some(bracket_idx) = content.find('[') {
+            if let Some(bracket_idx) = array_bracket_start(content) {
                 if bracket_idx > 0 {
                     let rest = &content[bracket_idx..];
                     if let Some(close_idx) = rest.find(']') {
@@ -279,6 +279,33 @@ fn find_kv_split(s: &str) -> Option<usize> {
 /// `## "a [1] b"`) is not misread as a named-array header. Mirrors the
 /// quote-aware scan in find_closing_brace; char_indices keeps the returned
 /// index byte-safe for multibyte names.
+/// Index of the '[' that opens a named-array marker (`name[N]:`), scanning past a
+/// quoted key so a '[' inside the key name is not mistaken for the array bracket
+/// (SPEC 4.2). Bare keys cannot contain '['.
+fn array_bracket_start(content: &str) -> Option<usize> {
+    let bytes = content.as_bytes();
+    if bytes.first() == Some(&b'"') {
+        let mut escaped = false;
+        let mut i = 1;
+        while i < bytes.len() {
+            if escaped {
+                escaped = false;
+            } else if bytes[i] == b'\\' {
+                escaped = true;
+            } else if bytes[i] == b'"' {
+                return if bytes.get(i + 1) == Some(&b'[') {
+                    Some(i + 1)
+                } else {
+                    None
+                };
+            }
+            i += 1;
+        }
+        return None;
+    }
+    content.find('[')
+}
+
 fn find_header_bracket_start(s: &str) -> Option<usize> {
     let bytes = s.as_bytes();
     let mut in_quote = false;
