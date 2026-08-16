@@ -1,5 +1,9 @@
 # Changelog
 
+## v3.0.1 (2026-08-15)
+
+- Decode: quoted-key/array-value round-trip (SPEC 4.2).
+
 ## v3.0.0 (2026-08-14)
 
 - **Numeric domain (spec v3.5.3, SPEC 2.3.2).** Specifies the canonical numeric domain as signed `int64` for integers and IEEE-754 double for non-integers. Earlier versions left integers beyond the double-exact range (2^53) to the host numeric type; this version parses integer literals to an exact `int64` on decode and on the JSON-to-value bridge, returns an out-of-range error for a value outside `int64` on both decode and encode, and models larger values (unsigned-64 identifiers, exact decimals) as strings. Canonical number formatting aligns to the domain: a double at or above 2^53 renders in exponent notation. Verified against new `numbers/017-024` and `errors-v2/041-042` conformance fixtures and the cross-SDK differential fuzz. **Breaking:** `encode_generic` / `encode_generic_with_options` now return `Result<String, String>` to surface the out-of-range error (previously infallible). A `serde_json` integer literal outside `[-2^63, 2^64-1]` is floated by `serde_json` before GCF sees it and is emitted as a double; see the README Numeric domain note.
